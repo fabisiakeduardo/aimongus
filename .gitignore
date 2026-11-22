@@ -25,6 +25,9 @@ erl_crash.dump
 # Ignore package tarball (built via "mix hex.build").
 aimongus-*.tar
 
+# Match replay recordings (keep the directory, ignore the content).
+/priv/replays/*.jsonl
+
 # Ignore assets that are produced by build tools.
 /priv/static/assets/
 
