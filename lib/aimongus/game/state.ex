@@ -36,6 +36,11 @@ defmodule Aimongus.Game.State do
       player gets one speak slot in sorted-id order (default `2`)
     * `:vote_seconds` — wall-clock voting deadline; players who haven't
       voted when it expires count as `:skip` (default `30`)
+    * `:match_max_seconds` — wall-clock stall cap measured from match
+      start; on expiry the match ends with a heuristic winner (default
+      `900`, i.e. 15 min; `nil` disables the cap)
+    * `:kill_threshold` — kills at which the stall-cap heuristic awards
+      the win to the impostors instead of the crew (default `2`)
     * `:investigate_range` — Euclidean tiles the sheriff may investigate
       within (default `3.0`)
     * `:investigate_cooldown_ticks` — ticks between investigations
@@ -137,6 +142,8 @@ defmodule Aimongus.Game.State do
     meeting_seconds: 90,
     speech_rounds: 2,
     vote_seconds: 30,
+    match_max_seconds: 900,
+    kill_threshold: 2,
     investigate_range: 3.0,
     investigate_cooldown_ticks: 300,
     protect_range: 3.0,

@@ -124,6 +124,22 @@ defmodule Aimongus.Game.Server do
   holds the run bookkeeping (speaker queue, speech `history`, `votes`,
   deadline) — Task 12 reads `history` to prompt each speaker.
 
+  ## Stall cap
+
+  `config.match_max_seconds` (default 900 — 15 min) is a hard wall-clock
+  deadline on the whole match, set at `start_match` and checked from
+  `maybe_advance` on every tick in every live phase, so a stuck game can
+  never burn tokens indefinitely. On expiry the match goes to
+  `:game_over`: a pending `Rules.winner/1` wins first (e.g. the cap
+  firing mid-`:eject` after the last impostor was voted out), otherwise
+  the heuristic applies — `server.kills >= config.kill_threshold`
+  (default 2) → `:impostors` pressed their advantage, else `:crew` by
+  survival. `kills` counts murders only; ejections don't. The timeout
+  broadcasts `{:match_timeout, winner}` then `{:game_over, winner}`.
+  `match_max_seconds: nil` disables the cap; `0` expires on the first
+  tick after start (the test-driving pattern, same as
+  `meeting_seconds: 0`).
+
   ## Rejections
 
   Intents submitted in the wrong phase are rejected — not queued — with
@@ -186,6 +202,8 @@ defmodule Aimongus.Game.Server do
     * `:meeting_ended` — the world is live again in `:free_roam`
     * `{:whisper, from_id, addressee_id | nil, audience_ids, text}` —
       the addressee is who was named; the audience is who actually heard
+    * `{:match_timeout, winner}` — the stall cap fired (see "Stall cap");
+      always followed by `{:game_over, winner}`
     * `{:game_over, winner}` where `winner` is `Rules.winner/1`'s shape
 
   `Rules.winner/1` is only evaluated once the match is in `:free_roam`
@@ -208,6 +226,8 @@ defmodule Aimongus.Game.Server do
             state: nil,
             actions: %{},
             meeting: nil,
+            kills: 0,
+            match_deadline: nil,
             tick_ms: 100,
             auto_tick?: true,
             shuffle_roles?: true
@@ -359,7 +379,12 @@ defmodule Aimongus.Game.Server do
       |> Map.new(fn {id, i} -> {id, Enum.at(roles, i, :crewmate)} end)
 
     state = server.state |> State.assign_roles(role_map) |> State.assign_tasks()
-    server = %{server | state: %{state | phase: :free_roam}}
+
+    server = %{
+      server
+      | state: %{state | phase: :free_roam},
+        match_deadline: deadline_in(state.config.match_max_seconds)
+    }
 
     broadcast(server, :match_started)
     Enum.each(ids, &broadcast(server, {:role_assigned, &1, state.players[&1].role}))
@@ -367,11 +392,19 @@ defmodule Aimongus.Game.Server do
     check_winner(server)
   end
 
-  defp maybe_advance(%{state: %{phase: :free_roam}} = server), do: advance_tick(server)
-  defp maybe_advance(%{state: %{phase: :meeting}} = server), do: advance_meeting(server)
-  defp maybe_advance(%{state: %{phase: :voting}} = server), do: advance_voting(server)
-  defp maybe_advance(%{state: %{phase: :eject}} = server), do: resolve_eject(server)
+  defp maybe_advance(%{state: %{phase: phase}} = server)
+       when phase in [:free_roam, :meeting, :voting, :eject] do
+    if deadline_passed?(server.match_deadline),
+      do: timeout_match(server),
+      else: advance_phase(server)
+  end
+
   defp maybe_advance(server), do: server
+
+  defp advance_phase(%{state: %{phase: :free_roam}} = server), do: advance_tick(server)
+  defp advance_phase(%{state: %{phase: :meeting}} = server), do: advance_meeting(server)
+  defp advance_phase(%{state: %{phase: :voting}} = server), do: advance_voting(server)
+  defp advance_phase(%{state: %{phase: :eject}} = server), do: resolve_eject(server)
 
   ## Tick
 
@@ -613,7 +646,8 @@ defmodule Aimongus.Game.Server do
           server = %{
             server
             | state: state,
-              actions: server.actions |> Map.delete(id) |> Map.delete(target_id)
+              actions: server.actions |> Map.delete(id) |> Map.delete(target_id),
+              kills: server.kills + 1
           }
 
           broadcast(server, {:killed, target_id, id, victim_pos})
@@ -1068,6 +1102,7 @@ defmodule Aimongus.Game.Server do
     state |> State.alive_players() |> Enum.map(& &1.id) |> Enum.sort()
   end
 
+  defp deadline_in(nil), do: nil
   defp deadline_in(seconds), do: System.monotonic_time(:millisecond) + round(seconds * 1000)
 
   defp deadline_passed?(nil), do: false
@@ -1078,6 +1113,35 @@ defmodule Aimongus.Game.Server do
   end
 
   ## Game over
+
+  # The stall cap: a hard wall-clock deadline on the whole match, so a
+  # stuck game can never burn tokens indefinitely. Checked from
+  # `maybe_advance` on every tick in every live phase — the world may be
+  # frozen mid-meeting but the recurring :tick (or a test `step/1`) still
+  # lands here. When the cap fires mid-`:eject` a real winner may already
+  # be pending (e.g. the last impostor was just voted out), so
+  # `Rules.winner/1` gets first say; only a genuinely undecided match
+  # falls to the heuristic.
+  defp timeout_match(server) do
+    winner = Rules.winner(server.state) || stall_winner(server)
+
+    server = %{
+      server
+      | state: %{server.state | phase: :game_over, winner: winner},
+        meeting: nil
+    }
+
+    broadcast(server, {:match_timeout, winner})
+    broadcast(server, {:game_over, winner})
+    server
+  end
+
+  # Survival heuristic: enough kills means the impostors pressed their
+  # advantage; anything less means the crew outlasted them. `kills` counts
+  # actual murders — ejections are democracy, not kills.
+  defp stall_winner(server) do
+    if server.kills >= server.state.config.kill_threshold, do: :impostors, else: :crew
+  end
 
   defp check_winner(%{state: %{phase: :free_roam}} = server) do
     case Rules.winner(server.state) do
