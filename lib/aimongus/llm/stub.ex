@@ -73,15 +73,21 @@ defmodule Aimongus.LLM.Stub do
 
       String.contains?(prompt, "phase meeting") ->
         line =
-          Enum.random([
-            "I was working on tasks in MedBay when the alarm went off.",
-            "Someone was loitering near Electrical — check alibis!",
-            "I saw movement heading out of Cafeteria right before the report.",
-            "Too quiet in here. Anyone willing to vouch for their room?"
-          ])
+          case Regex.run(~r/I SAW (\S+) kill (\S+)/, prompt) do
+            [_, killer, victim] ->
+              "I SAW #{killer} kill #{victim} with my own eyes — vote #{killer}!"
+
+            nil ->
+              Enum.random([
+                "I was working on tasks in MedBay when the alarm went off.",
+                "Someone was loitering near Electrical — check alibis!",
+                "I saw movement heading out of Cafeteria right before the report.",
+                "Too quiet in here. Anyone willing to vouch for their room?"
+              ])
+          end
 
         Jason.encode!(%{
-          reasoning: "sharing my alibi and testing reactions",
+          reasoning: "sharing what I know with the table",
           intent: %{type: "speak", text: line}
         })
 
@@ -92,11 +98,11 @@ defmodule Aimongus.LLM.Stub do
         })
 
       String.contains?(prompt, ~s|"type": "kill"|) and
-          Regex.match?(~r/- [^\n]+ \(id "([^"]+)"\)/, prompt) ->
+          lone_target?(prompt) ->
         [_, target] = Regex.run(~r/- [^\n]+ \(id "([^"]+)"\)/, prompt)
 
         Jason.encode!(%{
-          reasoning: "target #{target} is in sight — closing in",
+          reasoning: "#{target} is alone with me — no witnesses",
           intent: %{type: "kill", target: target}
         })
 
@@ -117,6 +123,14 @@ defmodule Aimongus.LLM.Stub do
             })
         end
     end
+  end
+
+  # A kill is only worth it on an isolated target: with a second pawn in
+  # sight, the murder gets a living witness who will report and accuse.
+  defp lone_target?(prompt) do
+    prompt
+    |> Regex.scan(~r/- [^\n]+ \(id "[^"]+"\)/)
+    |> length() == 1
   end
 
   defp pop(server, prompt) do

@@ -1142,6 +1142,8 @@ defmodule Aimongus.Game.Server do
       queue: queue,
       history: [],
       votes: %{},
+      pending: nil,
+      floor_ready_at: nil,
       deadline: deadline_in(server.state.config.meeting_seconds)
     }
 
@@ -1192,27 +1194,49 @@ defmodule Aimongus.Game.Server do
     broadcast(server, {:spoke, id, text})
     meeting = %{meeting | history: meeting.history ++ [{id, text}]}
 
-    case meeting.queue do
-      [next | rest] ->
-        server = %{server | meeting: %{meeting | current: next, queue: rest}}
-        broadcast(server, {:speak_request, next})
+    {next, rest, round} =
+      case meeting.queue do
+        [n | r] -> {n, r, meeting.round}
+        [] ->
+          if meeting.round < server.state.config.speech_rounds do
+            [n | r] = alive_ids(server.state)
+            {n, r, meeting.round + 1}
+          else
+            {:voting, [], meeting.round}
+          end
+      end
+
+    gap_ticks = div(server.state.config.floor_gap_ms, server.state.config.tick_ms)
+
+    if next == :voting or gap_ticks <= 0 do
+      promote_speaker(%{server | meeting: %{meeting | current: next, queue: rest, round: round}})
+    else
+      # A beat between speakers so spectators can read each line before
+      # the next one lands — the pending slot promotes on a later tick.
+      %{
         server
-
-      [] ->
-        if meeting.round < server.state.config.speech_rounds do
-          [next | rest] = alive_ids(server.state)
-
-          server = %{
-            server
-            | meeting: %{meeting | round: meeting.round + 1, current: next, queue: rest}
+        | meeting: %{
+            meeting
+            | current: nil,
+              pending: next,
+              queue: rest,
+              round: round,
+              floor_ready_at: server.state.tick + gap_ticks
           }
-
-          broadcast(server, {:speak_request, next})
-          server
-        else
-          start_voting(%{server | meeting: meeting})
-        end
+      }
     end
+  end
+
+  defp promote_speaker(%{meeting: %{current: :voting}} = server) do
+    meeting = server.meeting |> Map.put(:current, nil) |> Map.put(:pending, nil)
+    start_voting(%{server | meeting: meeting})
+  end
+
+  defp promote_speaker(server) do
+    meeting = Map.put(server.meeting, :pending, nil)
+    server = %{server | meeting: meeting}
+    broadcast(server, {:speak_request, meeting.current})
+    server
   end
 
   # The meeting deadline is a wall-clock cap on the *whole* discussion: a
@@ -1220,7 +1244,18 @@ defmodule Aimongus.Game.Server do
   # are skipped. Checked from `maybe_advance` — the recurring :tick keeps
   # firing through meetings and `step/1` drives it in tests.
   defp advance_meeting(server) do
-    if deadline_passed?(server.meeting.deadline), do: start_voting(server), else: server
+    meeting = server.meeting
+
+    cond do
+      deadline_passed?(meeting.deadline) ->
+        start_voting(server)
+
+      Map.get(meeting, :pending) && server.state.tick >= meeting.floor_ready_at ->
+        promote_speaker(%{server | meeting: %{meeting | current: meeting.pending}})
+
+      true ->
+        server
+    end
   end
 
   defp start_voting(server) do
@@ -1476,14 +1511,15 @@ defmodule Aimongus.Game.Server do
       {:meltdown, kind} ->
         cast_all(server, {:meltdown, kind})
 
-      {:killed, _victim_id, _killer_id, pos} ->
-        # A bare "look again" nudge to agents whose vision covers the
-        # corpse — decided server-side with the post-kill state. The
-        # cast itself carries no information; the corpse (and who it is)
-        # reaches the agent through its next `view_for/2`.
+      {:killed, victim_id, killer_id, pos} ->
+        # Witnesses: living players whose vision covered the kill spot
+        # *saw it happen* — they get the killer's identity as hard
+        # memory, plus the bare "look again" nudge for the corpse. The
+        # killer and victim are excluded (they know already).
         for {id, pid} <- server.agents,
+            id not in [killer_id, victim_id],
             Rules.visible?(server.state, id, pos) do
-          GenServer.cast(pid, :body_seen)
+          GenServer.cast(pid, {:witnessed_kill, killer_id, victim_id, pos})
         end
 
         :ok

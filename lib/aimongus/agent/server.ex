@@ -254,6 +254,15 @@ defmodule Aimongus.Agent.Server do
   def handle_cast(:match_started, state), do: {:noreply, wake(state)}
   def handle_cast(:body_seen, state), do: {:noreply, wake(state)}
 
+  def handle_cast({:witnessed_kill, killer, victim, pos}, state) do
+    {:noreply,
+     state
+     |> remember_hard(
+       "I SAW #{killer} kill #{victim} at #{inspect(pos)} — #{killer} is a killer"
+     )
+     |> wake()}
+  end
+
   # Unknown/misdirected events are dropped — an agent must survive a
   # message it doesn't understand, never crash on it.
   def handle_cast(_message, state), do: {:noreply, state}

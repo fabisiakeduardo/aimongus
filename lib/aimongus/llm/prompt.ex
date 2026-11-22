@@ -272,7 +272,7 @@ defmodule Aimongus.LLM.Prompt do
         ["Players in sight: none."]
 
       players ->
-        ["Players in sight:"] ++
+        ["Players in sight (they can see you too — anything you do, they witness):"] ++
           Enum.map(players, fn p ->
             # Whitelist — id/name/color/pos/room only. A leaked :role or
             # anything else in the map is deliberately never rendered.

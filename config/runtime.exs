@@ -28,6 +28,8 @@ case System.get_env("AIMONGUS_LLM") do
     config :aimongus, :llm_adapters, %{default: Aimongus.LLM.Stub}
 
     config :aimongus, Aimongus.Match.Manager,
+      speed: 2.0,
+      game_config: %{floor_gap_ms: 1_800},
       agent_opts: [poll_ms: 2_500, llm_opts: [respond: &Aimongus.LLM.Stub.demo_responder/1]]
 
   "devin" ->

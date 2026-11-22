@@ -149,6 +149,7 @@ defmodule Aimongus.Game.State do
     button_range: 1.5,
     meeting_seconds: 90,
     speech_rounds: 2,
+    floor_gap_ms: 0,
     vote_seconds: 30,
     match_max_seconds: 900,
     kill_threshold: 2,
