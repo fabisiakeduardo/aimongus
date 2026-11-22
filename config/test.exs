@@ -8,9 +8,9 @@ config :aimongus, AimongusWeb.Endpoint,
   server: false
 
 # Tests route every agent through the scripted stub — no real CLI or
-# HTTP calls. "p1" maps to a different adapter purely to exercise
-# per-agent selection in tests; it is resolved, never called.
-config :aimongus, :llm_adapters, %{"p1" => Aimongus.LLM.DevinCLI, default: Aimongus.LLM.Stub}
+# HTTP calls. "p1" maps to the harmless test-support NoopAdapter purely
+# to exercise per-agent selection; safe to call with no opts.
+config :aimongus, :llm_adapters, %{"p1" => Aimongus.LLM.NoopAdapter, default: Aimongus.LLM.Stub}
 
 # Print only warnings and errors during test
 config :logger, level: :warning

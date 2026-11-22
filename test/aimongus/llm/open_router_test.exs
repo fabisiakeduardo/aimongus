@@ -53,6 +53,43 @@ defmodule Aimongus.LLM.OpenRouterTest do
              )
   end
 
+  test "json_mode: false overrides a configured json_mode: true" do
+    Application.put_env(:aimongus, Aimongus.LLM.OpenRouter, json_mode: true)
+    on_exit(fn -> Application.delete_env(:aimongus, Aimongus.LLM.OpenRouter) end)
+
+    plug = fn conn ->
+      {:ok, body, conn} = read_body(conn)
+      refute Map.has_key?(Jason.decode!(body), "response_format")
+
+      json_response(conn, 200, content_response("{}"))
+    end
+
+    assert {:ok, "{}"} =
+             OpenRouter.complete("p",
+               model: "m",
+               api_key: "k",
+               json_mode: false,
+               plug: plug
+             )
+  end
+
+  test "url: opt overrides the default endpoint" do
+    plug = fn conn ->
+      assert conn.host == "proxy.test"
+      assert conn.request_path == "/v1/chat"
+
+      json_response(conn, 200, content_response("ok"))
+    end
+
+    assert {:ok, "ok"} =
+             OpenRouter.complete("p",
+               model: "m",
+               api_key: "k",
+               url: "http://proxy.test/v1/chat",
+               plug: plug
+             )
+  end
+
   test "non-2xx status returns {:error, {:http_status, status, body}}" do
     plug = fn conn -> json_response(conn, 429, %{"error" => "rate limited"}) end
 

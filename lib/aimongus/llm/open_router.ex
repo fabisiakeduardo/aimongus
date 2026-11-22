@@ -18,9 +18,11 @@ defmodule Aimongus.LLM.OpenRouter do
       enable for models that support it.
     * `:timeout` — Req `receive_timeout` in ms; default 60s, or the
       module config's `:timeout`.
-    * `:plug`, `:retry`, `:base_url` — passed through to Req. `:plug`
-      is the test seam (a `conn -> conn` function); no real HTTP in
-      tests.
+    * `:url` — endpoint override, default the OpenRouter
+      chat-completions URL (or the module config's `:url`). Useful for
+      OpenRouter-compatible proxies.
+    * `:plug`, `:retry` — passed through to Req. `:plug` is the test
+      seam (a `conn -> conn` function); no real HTTP in tests.
   """
 
   @behaviour Aimongus.LLM.Client
@@ -47,12 +49,12 @@ defmodule Aimongus.LLM.OpenRouter do
 
     req_opts =
       [
-        url: @url,
+        url: url(opts),
         json: body,
         auth: {:bearer, api_key},
         receive_timeout: timeout(opts)
       ]
-      |> Keyword.merge(Keyword.take(opts, [:plug, :retry, :base_url]))
+      |> Keyword.merge(Keyword.take(opts, [:plug, :retry]))
 
     case Req.post(req_opts) do
       {:ok, %{status: status, body: %{"choices" => [%{"message" => %{"content" => text}} | _]}}}
@@ -68,7 +70,7 @@ defmodule Aimongus.LLM.OpenRouter do
   end
 
   defp maybe_json_mode(body, opts) do
-    if Keyword.get(opts, :json_mode) || configured(:json_mode) do
+    if Keyword.get(opts, :json_mode, configured(:json_mode)) do
       Map.put(body, :response_format, %{type: "json_object"})
     else
       body
@@ -77,6 +79,10 @@ defmodule Aimongus.LLM.OpenRouter do
 
   defp timeout(opts) do
     Keyword.get(opts, :timeout) || configured(:timeout) || @default_timeout
+  end
+
+  defp url(opts) do
+    Keyword.get(opts, :url) || configured(:url) || @url
   end
 
   defp configured(key) do

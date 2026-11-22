@@ -9,9 +9,16 @@ defmodule Aimongus.LLM.IntentPipelineTest do
 
   describe "adapter selection" do
     test "a configured agent key resolves to its adapter" do
-      # test env maps "p1" => DevinCLI specifically to exercise the
-      # per-agent lookup — it is only resolved here, never called.
-      assert Client.adapter_for("p1") == Aimongus.LLM.DevinCLI
+      # test env maps "p1" => NoopAdapter specifically to exercise the
+      # per-agent lookup — a harmless test-support stand-in.
+      assert Client.adapter_for("p1") == Aimongus.LLM.NoopAdapter
+    end
+
+    test "the per-agent override is safe to call with no opts" do
+      # Guards the config mapping: the resolved adapter for "p1" must
+      # never shell out or hit the network when invoked bare.
+      assert {:ok, text} = Client.complete("p1", "any prompt")
+      assert {:ok, %{intent: :nothing}} = Intent.parse(text)
     end
 
     test "unconfigured agents fall back to :default (Stub in test env)" do
