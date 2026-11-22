@@ -34,6 +34,16 @@ defmodule Aimongus.Game.State do
       player gets one speak slot in sorted-id order (default `2`)
     * `:vote_seconds` — wall-clock voting deadline; players who haven't
       voted when it expires count as `:skip` (default `30`)
+    * `:investigate_range` — Euclidean tiles the sheriff may investigate
+      within (default `3.0`)
+    * `:investigate_cooldown_ticks` — ticks between investigations
+      (default `300`, ~30s at 10 Hz)
+    * `:protect_range` — Euclidean tiles the medic may protect within
+      (default `3.0`)
+    * `:protect_duration_ticks` — how long a protection shield holds
+      (default `300`, ~30s at 10 Hz)
+    * `:protect_cooldown_ticks` — ticks between protections
+      (default `300`, ~30s at 10 Hz)
 
   ## Tasks and the win pool
 
@@ -51,8 +61,8 @@ defmodule Aimongus.Game.State do
   defmodule Player do
     @moduledoc """
     A single pawn: identity, secret role, personality card, position and
-    per-player ability state (kill cooldown, medic protection, vigilante
-    shot, current movement path).
+    per-player ability state (kill cooldown, role ability cooldown,
+    medic protection, vigilante shot, current movement path).
     """
 
     defstruct id: nil,
@@ -65,6 +75,7 @@ defmodule Aimongus.Game.State do
               tasks: %{},
               path: [],
               kill_ready_at: 0,
+              ability_ready_at: 0,
               protected_until: nil,
               vigilante_shot_used?: false
 
@@ -80,6 +91,7 @@ defmodule Aimongus.Game.State do
             tasks: %{String.t() => boolean()},
             path: [Aimongus.Game.Map.pos()],
             kill_ready_at: non_neg_integer(),
+            ability_ready_at: non_neg_integer(),
             protected_until: non_neg_integer() | nil,
             vigilante_shot_used?: boolean()
           }
@@ -118,7 +130,12 @@ defmodule Aimongus.Game.State do
     button_range: 1.5,
     meeting_seconds: 90,
     speech_rounds: 2,
-    vote_seconds: 30
+    vote_seconds: 30,
+    investigate_range: 3.0,
+    investigate_cooldown_ticks: 300,
+    protect_range: 3.0,
+    protect_duration_ticks: 300,
+    protect_cooldown_ticks: 300
   }
 
   defstruct phase: :lobby,

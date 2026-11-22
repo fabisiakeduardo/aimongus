@@ -54,7 +54,25 @@ defmodule Aimongus.Game.Server do
       task must be on the player's own list (impostor fake lists work too
       — they just never touch the win pool). Abandoning resets progress.
     * `{:kill, target}` — checked through `Rules.can_kill?/3` with
-      precise rejection reasons (see below).
+      precise rejection reasons (see below). Kill-capable: impostors,
+      the serial killer, and the vigilante (exactly one shot — a second
+      `kill` intent rejects `:already_used`). A kill on a medic-shielded
+      target is *blocked*, not illegal: the shield is consumed, the
+      attacker still spends their cooldown (and a vigilante's shot), the
+      reply is `{:rejected, :blocked}` and `{:kill_blocked, victim}` is
+      broadcast.
+    * `{:investigate, target}` — sheriff only, within
+      `config.investigate_range`, on `config.investigate_cooldown_ticks`.
+      The verdict comes back in the reply:
+      `{:ok, {:hint, target, :suspicious | :innocent}}`
+      (`Rules.suspicion/1` — impostors and the serial killer read
+      suspicious). A `{:hint, sheriff, target, verdict}` copy is
+      broadcast for the god-view spectator feed; other agents never
+      see it.
+    * `{:protect, target}` — medic only, within `config.protect_range`,
+      on `config.protect_cooldown_ticks`. Sets the target's
+      `protected_until` to `tick + config.protect_duration_ticks` and
+      broadcasts `{:protected, medic, target}`.
     * `:report` — reports the nearest unreported body the player can see
       (`Rules.visible?/3`). Marks that body `reported?: true` — other
       bodies stay hidden — then calls a meeting.
@@ -93,6 +111,9 @@ defmodule Aimongus.Game.Server do
        clears `state.bodies` (Among Us corpse cleanup), preserves
        positions and kill cooldowns, re-evaluates `Rules.winner/1`, then
        lands in `:free_roam` (`:meeting_ended`) or `:game_over`.
+       Exception: ejecting the **jester** is an immediate solo win —
+       the phase goes straight to `:game_over, {:solo, id}` (the
+       `:eject` transient is skipped; `{:ejected, ...}` still fires).
 
   Deadlines are wall-clock (monotonic ms) checked from `maybe_advance` —
   the recurring `:tick` timer keeps firing through meetings, and
@@ -110,7 +131,14 @@ defmodule Aimongus.Game.Server do
     * `:unreachable`, `:unknown_room`, `:bad_destination` (move)
     * `:unknown_task`, `:not_assigned`, `:task_done` (do_task)
     * `:dead`, `:unknown_target`, `:target_dead`, `:cannot_kill`,
-      `{:cooldown, ticks_left}`, `:out_of_range` (kill)
+      `:already_used` (vigilante's spent shot), `:blocked` (target was
+      medic-protected), `{:cooldown, ticks_left}`, `:out_of_range` (kill)
+    * `:cannot_investigate` (non-sheriff or self) — investigate otherwise
+      reuses `:dead`, `:unknown_target`, `:target_dead`,
+      `{:cooldown, ticks_left}`, `:out_of_range`
+    * `:cannot_protect` (non-medic) — protect otherwise reuses `:dead`,
+      `:unknown_target`, `:target_dead`, `{:cooldown, ticks_left}`,
+      `:out_of_range`
     * `:no_body` (report), `:no_button`, `:not_at_button` (press_button)
     * `:invalid_text` (whisper, speak)
     * `:not_your_turn` (speak), `:unknown_target`, `:target_dead` (vote)
@@ -119,8 +147,9 @@ defmodule Aimongus.Game.Server do
 
   Dead players keep Among Us ghost privileges: `move_to`, `do_task` and
   `:nothing` still work (that's why `state.tasks` keeps dead players'
-  assignments in the pool). `kill`, `report`, `press_button` and
-  `whisper` return `{:rejected, :dead}` — ghosts don't touch the living.
+  assignments in the pool). `kill`, `investigate`, `protect`, `report`,
+  `press_button` and `whisper` return `{:rejected, :dead}` — ghosts
+  don't touch the living.
   Ghosts are also silent in meetings: `speak` and `vote` return
   `{:rejected, :dead}`.
 
@@ -134,7 +163,13 @@ defmodule Aimongus.Game.Server do
     * `{:moved, id, pos}`
     * `{:task_progress, id, task_id, pct}` (integer 0–100),
       `{:task_done, id, task_id}`
-    * `{:killed, victim_id, killer_id, pos}`
+    * `{:killed, victim_id, killer_id, pos}`,
+      `{:kill_blocked, victim_id}` (a medic shield held)
+    * `{:hint, sheriff_id, target_id, :suspicious | :innocent}` — the
+      investigator's copy comes back as the intent reply; this event is
+      for the spectator feed (agents must never be routed it — see the
+      `submit_intent/3` doc)
+    * `{:protected, medic_id, target_id}`
     * `{:body_reported, reporter_id, pos}`, `{:button_pressed, id}`,
       `:meeting_called`
     * `{:meeting_started, {:report, id} | {:button, id}}`
@@ -184,9 +219,11 @@ defmodule Aimongus.Game.Server do
 
   Returns `:ok` when accepted or `{:rejected, reason}` — the tuple the
   agent runtime (Task 12) folds back into that agent's memory.
+  `{:investigate, target}` is the one intent with a payload reply:
+  `{:ok, {:hint, target, :suspicious | :innocent}}`.
   """
   @spec submit_intent(term(), State.Player.id(), term()) ::
-          :ok | {:rejected, term()}
+          :ok | {:ok, term()} | {:rejected, term()}
   def submit_intent(match_id, player_id, intent) do
     GenServer.call(via(match_id), {:intent, player_id, intent})
   end
@@ -421,6 +458,11 @@ defmodule Aimongus.Game.Server do
   defp dispatch_intent(server, id, {:move_to, dest}), do: exec_move(server, id, dest)
   defp dispatch_intent(server, id, {:do_task, task_id}), do: exec_task(server, id, task_id)
   defp dispatch_intent(server, id, {:kill, target}), do: exec_kill(server, id, target)
+
+  defp dispatch_intent(server, id, {:investigate, target}),
+    do: exec_investigate(server, id, target)
+
+  defp dispatch_intent(server, id, {:protect, target}), do: exec_protect(server, id, target)
   defp dispatch_intent(server, id, :report), do: exec_report(server, id)
   defp dispatch_intent(server, id, :press_button), do: exec_button(server, id)
   defp dispatch_intent(server, id, {:whisper, text}), do: exec_whisper(server, id, text)
@@ -533,7 +575,7 @@ defmodule Aimongus.Game.Server do
         victim == nil -> :unknown_target
         not victim.alive? -> :target_dead
         id == target_id -> :cannot_kill
-        not Rules.kill_capable?(killer) -> :cannot_kill
+        not Rules.kill_capable?(killer) -> kill_incapable_reason(killer)
         state.tick < killer.kill_ready_at -> {:cooldown, killer.kill_ready_at - state.tick}
         Rules.distance(killer.pos, victim.pos) > state.config.kill_range -> :out_of_range
         true -> nil
@@ -541,6 +583,22 @@ defmodule Aimongus.Game.Server do
 
     if rejection do
       {{:rejected, rejection}, server}
+    else
+      do_kill(server, id, target_id)
+    end
+  end
+
+  # A spent vigilante shot gets its own reason so the agent is told the
+  # shot is gone — everyone else who can't kill just can't kill.
+  defp kill_incapable_reason(%{role: :vigilante, vigilante_shot_used?: true}), do: :already_used
+  defp kill_incapable_reason(_killer), do: :cannot_kill
+
+  defp do_kill(server, id, target_id) do
+    state = server.state
+    victim = state.players[target_id]
+
+    if Rules.protected?(state, victim) do
+      blocked_kill(server, id, target_id)
     else
       case State.kill(state, id, target_id) do
         {:ok, state} ->
@@ -558,6 +616,121 @@ defmodule Aimongus.Game.Server do
         {:error, :illegal_kill} ->
           {{:rejected, :illegal_kill}, server}
       end
+    end
+  end
+
+  # The attempt lands but the medic's shield holds: the protection is
+  # consumed, and the attacker still spends their cooldown — and a
+  # vigilante's single shot — because the kill was attempted, just
+  # blocked. The attacker's rejection is `:blocked` (they learn the
+  # shield held; that's the drama), spectators get `{:kill_blocked, id}`.
+  defp blocked_kill(server, id, target_id) do
+    state = server.state
+
+    victim = %{state.players[target_id] | protected_until: nil}
+
+    killer = %{
+      state.players[id]
+      | kill_ready_at: state.tick + state.config.kill_cooldown_ticks
+    }
+
+    killer =
+      if killer.role == :vigilante,
+        do: %{killer | vigilante_shot_used?: true},
+        else: killer
+
+    players = state.players |> Map.put(target_id, victim) |> Map.put(id, killer)
+    server = %{server | state: %{state | players: players}}
+
+    broadcast(server, {:kill_blocked, target_id})
+    {{:rejected, :blocked}, server}
+  end
+
+  defp exec_investigate(server, id, target_id) do
+    state = server.state
+    sheriff = state.players[id]
+    target = state.players[target_id]
+
+    rejection =
+      cond do
+        not sheriff.alive? ->
+          :dead
+
+        sheriff.role != :sheriff or id == target_id ->
+          :cannot_investigate
+
+        target == nil ->
+          :unknown_target
+
+        not target.alive? ->
+          :target_dead
+
+        state.tick < sheriff.ability_ready_at ->
+          {:cooldown, sheriff.ability_ready_at - state.tick}
+
+        Rules.distance(sheriff.pos, target.pos) > state.config.investigate_range ->
+          :out_of_range
+
+        true ->
+          nil
+      end
+
+    if rejection do
+      {{:rejected, rejection}, server}
+    else
+      sheriff = %{
+        sheriff
+        | ability_ready_at: state.tick + state.config.investigate_cooldown_ticks
+      }
+
+      server = put_in(server.state.players[id], sheriff)
+
+      # the hint is private: it comes back as the intent reply (the
+      # channel Task 12 folds into the sheriff's memory). A copy is
+      # broadcast tagged with the sheriff's id for the god-view
+      # spectator feed — it is never routed to other agents.
+      verdict = Rules.suspicion(target)
+      broadcast(server, {:hint, id, target_id, verdict})
+      {{:ok, {:hint, target_id, verdict}}, server}
+    end
+  end
+
+  defp exec_protect(server, id, target_id) do
+    state = server.state
+    medic = state.players[id]
+    target = state.players[target_id]
+
+    rejection =
+      cond do
+        not medic.alive? -> :dead
+        medic.role != :medic -> :cannot_protect
+        target == nil -> :unknown_target
+        not target.alive? -> :target_dead
+        state.tick < medic.ability_ready_at -> {:cooldown, medic.ability_ready_at - state.tick}
+        Rules.distance(medic.pos, target.pos) > state.config.protect_range -> :out_of_range
+        true -> nil
+      end
+
+    if rejection do
+      {{:rejected, rejection}, server}
+    else
+      # Map.update! on the medic (not a struct replace) so self-protection
+      # lands both fields on the same player
+      players =
+        state.players
+        |> Map.put(target_id, %{
+          target
+          | protected_until: state.tick + state.config.protect_duration_ticks
+        })
+        |> Map.update!(
+          id,
+          &%{&1 | ability_ready_at: state.tick + state.config.protect_cooldown_ticks}
+        )
+
+      server = %{server | state: %{state | players: players}}
+
+      broadcast(server, {:protected, id, target_id})
+      {:ok, server}
     end
   end
 
@@ -820,11 +993,26 @@ defmodule Aimongus.Game.Server do
       [choice] when choice != :skip ->
         role = server.state.players[choice].role
         server = put_in(server.state.players[choice].alive?, false)
-        # TODO(Task 6): ejecting the jester is a solo win — game_over
-        # {:solo, id} — for now it is a normal eject.
-        role = if server.state.config.reveal_role_on_eject, do: role, else: nil
-        broadcast(server, {:ejected, choice, role})
-        server
+        revealed = if server.state.config.reveal_role_on_eject, do: role, else: nil
+        broadcast(server, {:ejected, choice, revealed})
+
+        if role == :jester do
+          # the jester wins by being ejected — game over on the spot,
+          # skipping the :eject transient (the ejection event above is
+          # already observable; the solo win resolves immediately)
+          winner = {:solo, choice}
+
+          server = %{
+            server
+            | state: %{server.state | phase: :game_over, winner: winner},
+              meeting: nil
+          }
+
+          broadcast(server, {:game_over, winner})
+          server
+        else
+          server
+        end
 
       _tied_or_skip ->
         broadcast(server, :no_ejection)

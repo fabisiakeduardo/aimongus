@@ -183,6 +183,25 @@ defmodule Aimongus.Game.Rules do
     role in @kill_roles or (role == :vigilante and not shot_used?)
   end
 
+  @doc """
+  The sheriff's read on a player — `:suspicious` for the secret killers
+  (`:impostor`, `:serial_killer`), `:innocent` for everyone else,
+  including the other neutrals (jester, vigilante).
+  """
+  @spec suspicion(Player.t()) :: :suspicious | :innocent
+  def suspicion(%Player{role: role}) do
+    if role in [:impostor, :serial_killer], do: :suspicious, else: :innocent
+  end
+
+  @doc """
+  Whether `player` is currently under a medic shield — i.e. `tick` is
+  still inside `protected_until`'s window.
+  """
+  @spec protected?(State.t(), Player.t()) :: boolean()
+  def protected?(%State{} = state, %Player{protected_until: protected_until}) do
+    protected_until != nil and state.tick < protected_until
+  end
+
   defp los?(map, from, to) do
     same_room?(map, from, to) or clear_line?(map, from, to)
   end
