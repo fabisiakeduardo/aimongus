@@ -329,5 +329,35 @@ defmodule Aimongus.Match.ManagerTest do
 
       assert is_pid(pid2)
     end
+
+    test "new_match/2 applies agent_count, roles, and speed overrides" do
+      match_id = unique_id()
+      mgr = start_manager(match_id: match_id, players: nil, inter_match_seconds: 60)
+
+      pid1 = eventually(fn -> game_pid(match_id) end)
+      assert is_pid(pid1)
+
+      assert :ok =
+               Manager.new_match(mgr, %{
+                 agent_count: 5,
+                 roles: [:impostor, :sheriff, :jester, :crewmate, :crewmate],
+                 speed: 2.0
+               })
+
+      pid2 =
+        eventually(fn ->
+          case game_pid(match_id) do
+            pid when is_pid(pid) and pid != pid1 -> pid
+            _other -> nil
+          end
+        end)
+
+      assert is_pid(pid2)
+      state = Server.state(match_id)
+      assert map_size(state.players) == 5
+      assert state.config.roles == [:impostor, :sheriff, :jester, :crewmate, :crewmate]
+      assert state.config.tick_ms == 50
+      assert Manager.status(mgr).speed == 2.0
+    end
   end
 end

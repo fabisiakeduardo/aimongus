@@ -13,24 +13,25 @@ defmodule AimongusWeb.AdminController do
   use AimongusWeb, :controller
 
   alias Aimongus.Match.Manager
+  alias AimongusWeb.AdminAuth
 
   def new_match(conn, params) do
-    expected = System.get_env("AIMONGUS_ADMIN_TOKEN")
     given = params["token"] || header_token(conn)
 
-    cond do
-      is_nil(expected) or expected == "" ->
+    case AdminAuth.authorize(given) do
+      :disabled ->
         conn |> put_status(:forbidden) |> json(%{error: "admin disabled"})
 
-      not valid_token?(given, expected) ->
+      :unauthorized ->
         conn |> put_status(:unauthorized) |> json(%{error: "unauthorized"})
 
-      Process.whereis(Manager) == nil ->
-        conn |> put_status(:service_unavailable) |> json(%{error: "match manager not running"})
-
-      true ->
-        :ok = Manager.new_match()
-        conn |> put_status(:accepted) |> json(%{status: "restarting match"})
+      :ok ->
+        if Process.whereis(Manager) == nil do
+          conn |> put_status(:service_unavailable) |> json(%{error: "match manager not running"})
+        else
+          :ok = Manager.new_match()
+          conn |> put_status(:accepted) |> json(%{status: "restarting match"})
+        end
     end
   end
 
@@ -40,12 +41,4 @@ defmodule AimongusWeb.AdminController do
       [] -> nil
     end
   end
-
-  # constant-time compare keeps the token's value out of timing attacks;
-  # secure_compare/2 already returns false on a length mismatch
-  defp valid_token?(given, expected) when is_binary(given) do
-    Plug.Crypto.secure_compare(given, expected)
-  end
-
-  defp valid_token?(_given, _expected), do: false
 end

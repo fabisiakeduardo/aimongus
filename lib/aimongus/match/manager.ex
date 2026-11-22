@@ -103,7 +103,9 @@ defmodule Aimongus.Match.Manager do
 
   defstruct match_id: @default_match_id,
             players: nil,
+            agent_count: length(@player_names),
             roles: nil,
+            speed: 1.0,
             game_config: %{},
             agents?: true,
             adapter_lookup: &Client.adapter_for/1,
@@ -138,10 +140,14 @@ defmodule Aimongus.Match.Manager do
   @doc """
   Tears down whatever is running and immediately starts the next match
   (or replay, if live play is blocked) — the admin "restart the match"
-  control. `{:reply, :ok}` once the new thing is running.
+  control. Optionally accepts `overrides` (`:agent_count`, `:roles`,
+  `:speed`, `:game_config`) to reconfigure the match before restarting.
+  Returns `:ok` once the new thing is running.
   """
-  @spec new_match(GenServer.server()) :: :ok
-  def new_match(server \\ __MODULE__), do: GenServer.call(server, :new_match, :infinity)
+  @spec new_match(GenServer.server(), map() | keyword()) :: :ok
+  def new_match(server \\ __MODULE__, overrides \\ %{}) do
+    GenServer.call(server, {:new_match, Map.new(overrides)}, :infinity)
+  end
 
   @doc """
   A snapshot for admin/observability: `%{mode, match_id, spent, budget,
@@ -212,8 +218,8 @@ defmodule Aimongus.Match.Manager do
     {:reply, status_of(state), state}
   end
 
-  def handle_call(:new_match, _from, state) do
-    state = state |> cancel_timers() |> decide()
+  def handle_call({:new_match, overrides}, _from, state) do
+    state = state |> apply_overrides(overrides) |> cancel_timers() |> decide()
     {:reply, :ok, state}
   end
 
@@ -475,16 +481,60 @@ defmodule Aimongus.Match.Manager do
 
   ## Roster
 
-  # Re-rolled per match: the nine color-name players, each with a fresh
-  # personality card. `players:` config overrides (tests use pawns with
-  # fixed positions).
-  defp roster(%{players: nil}) do
-    for name <- @player_names do
+  # Re-rolled per match: up to `agent_count` color-name players, each with
+  # a fresh personality card. `players:` config overrides (tests use pawns
+  # with fixed positions).
+  defp roster(%{players: nil, agent_count: count}) do
+    for name <- Enum.take(@player_names, count) do
       %{id: name, name: name, color: String.downcase(name), personality: Personality.random()}
     end
   end
 
   defp roster(%{players: players}), do: players
+
+  defp apply_overrides(state, overrides) when map_size(overrides) == 0, do: state
+
+  defp apply_overrides(state, overrides) do
+    state
+    |> apply_agent_count(overrides[:agent_count])
+    |> apply_roles(overrides[:roles])
+    |> apply_speed(overrides[:speed])
+    |> apply_game_config(overrides[:game_config])
+  end
+
+  defp apply_agent_count(state, count)
+       when is_integer(count) and count >= 3 and count <= length(@player_names) do
+    %{state | agent_count: count, players: nil}
+  end
+
+  defp apply_agent_count(state, _other), do: state
+
+  defp apply_roles(state, roles) when is_list(roles) and roles != [] do
+    %{state | roles: roles}
+  end
+
+  defp apply_roles(state, _other), do: state
+
+  defp apply_speed(state, speed) when is_number(speed) and speed > 0 do
+    tick_ms = max(20, round(100 / speed))
+    game_config = Map.put(state.game_config, :tick_ms, tick_ms)
+
+    agent_opts =
+      case Keyword.get(state.agent_opts, :poll_ms) do
+        :manual -> state.agent_opts
+        _other -> Keyword.put(state.agent_opts, :poll_ms, max(500, round(6_000 / speed)))
+      end
+
+    %{state | speed: speed * 1.0, game_config: game_config, agent_opts: agent_opts}
+  end
+
+  defp apply_speed(state, _other), do: state
+
+  defp apply_game_config(state, %{} = cfg) when map_size(cfg) > 0 do
+    %{state | game_config: Map.merge(state.game_config, cfg)}
+  end
+
+  defp apply_game_config(state, _other), do: state
 
   ## Teardown helpers
 
@@ -577,7 +627,9 @@ defmodule Aimongus.Match.Manager do
       match_id: state.match_id,
       spent: state.spent,
       budget: state.budget,
-      players: length(roster(state))
+      players: length(roster(state)),
+      roles: state.roles,
+      speed: state.speed
     }
   end
 end

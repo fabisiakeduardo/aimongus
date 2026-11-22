@@ -23,6 +23,13 @@ end
 config :aimongus, AimongusWeb.Endpoint,
   http: [port: String.to_integer(System.get_env("PORT", "4000"))]
 
+if System.get_env("AIMONGUS_LLM") == "stub" do
+  config :aimongus, :llm_adapters, %{default: Aimongus.LLM.Stub}
+
+  config :aimongus, Aimongus.Match.Manager,
+    agent_opts: [poll_ms: 2_500, llm_opts: [respond: &Aimongus.LLM.Stub.demo_responder/1]]
+end
+
 if config_env() == :dev do
   # Reload browser tabs when matching files change.
   config :aimongus, AimongusWeb.Endpoint,

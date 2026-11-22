@@ -48,6 +48,77 @@ defmodule Aimongus.LLM.Stub do
   @spec prompts(GenServer.server()) :: [String.t()]
   def prompts(server), do: Agent.get(server, fn state -> Enum.reverse(state.prompts) end)
 
+  @demo_rooms ~w(Cafeteria Weapons Navigation O2 Shields Storage Admin Electrical MedBay Reactor)
+
+  @doc """
+  Phase-aware zero-cost responder for local `AIMONGUS_LLM=stub mix phx.server`
+  smoke runs. Parses cues from the rendered prompt and returns a valid
+  `{"reasoning", "intent"}` JSON string so pawns walk, work tasks, report
+  bodies, speak in meetings and vote without hitting a real LLM.
+  """
+  @spec demo_responder(String.t()) :: String.t()
+  def demo_responder(prompt) when is_binary(prompt) do
+    cond do
+      String.contains?(prompt, "phase voting") ->
+        choice =
+          case Regex.scan(~r/\(id "([^"]+)"\)/, prompt) do
+            [] -> "skip"
+            matches -> matches |> Enum.random() |> List.last()
+          end
+
+        Jason.encode!(%{
+          reasoning: "weighing the meeting claims before casting my ballot",
+          intent: %{type: "vote", target: choice}
+        })
+
+      String.contains?(prompt, "phase meeting") ->
+        line =
+          Enum.random([
+            "I was working on tasks in MedBay when the alarm went off.",
+            "Someone was loitering near Electrical — check alibis!",
+            "I saw movement heading out of Cafeteria right before the report.",
+            "Too quiet in here. Anyone willing to vouch for their room?"
+          ])
+
+        Jason.encode!(%{
+          reasoning: "sharing my alibi and testing reactions",
+          intent: %{type: "speak", text: line}
+        })
+
+      String.contains?(prompt, "Bodies in sight:") ->
+        Jason.encode!(%{
+          reasoning: "spotted a body — calling a meeting immediately",
+          intent: %{type: "report"}
+        })
+
+      String.contains?(prompt, ~s|"type": "kill"|) and
+          Regex.match?(~r/- [^\n]+ \(id "([^"]+)"\)/, prompt) ->
+        [_, target] = Regex.run(~r/- [^\n]+ \(id "([^"]+)"\)/, prompt)
+
+        Jason.encode!(%{
+          reasoning: "target #{target} is in sight — closing in",
+          intent: %{type: "kill", target: target}
+        })
+
+      true ->
+        case Regex.run(~r/- (T\d+)[^\n]*not done/, prompt) do
+          [_, task_id] ->
+            Jason.encode!(%{
+              reasoning: "heading to finish #{task_id}",
+              intent: %{type: "do_task", target: task_id}
+            })
+
+          nil ->
+            room = Enum.random(@demo_rooms)
+
+            Jason.encode!(%{
+              reasoning: "patrolling toward #{room}",
+              intent: %{type: "move_to", target: room}
+            })
+        end
+    end
+  end
+
   defp pop(server, prompt) do
     Agent.get_and_update(server, fn state ->
       state = %{state | prompts: [prompt | state.prompts]}

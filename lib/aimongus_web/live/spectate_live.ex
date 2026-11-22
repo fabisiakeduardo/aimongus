@@ -30,9 +30,22 @@ defmodule AimongusWeb.SpectateLive do
   alias Aimongus.Game.Map, as: GameMap
   alias Aimongus.Game.Personality
   alias Aimongus.Game.State
+  alias Aimongus.Match.Manager
+  alias AimongusWeb.AdminAuth
 
   @feed_limit 200
   @cell 26
+
+  @default_admin_config %{
+    "agent_count" => "9",
+    "impostors" => "2",
+    "sheriff" => "true",
+    "medic" => "true",
+    "vigilante" => "false",
+    "jester" => "true",
+    "serial_killer" => "false",
+    "speed" => "1.0"
+  }
 
   # Kill-capable roles get the subtle god-view marker on their pawn.
   @murder_roles [:impostor, :serial_killer]
@@ -75,7 +88,14 @@ defmodule AimongusWeb.SpectateLive do
         # gesture, so the header toggle doubles as the unlock click
         muted: true,
         feed: [],
-        feed_seq: 0
+        feed_seq: 0,
+        admin_open?: false,
+        admin_unlocked?: false,
+        admin_auth_error: nil,
+        admin_config_error: nil,
+        admin_auth_form: to_form(%{"token" => ""}, as: :admin_auth),
+        admin_config_params: @default_admin_config,
+        admin_config_form: to_form(@default_admin_config, as: :match_config)
       )
       |> refresh_state()
 
@@ -113,6 +133,119 @@ defmodule AimongusWeb.SpectateLive do
      socket
      |> assign(muted: muted)
      |> push_event("sound", %{name: "control", muted: muted, ambient: ambient})}
+  end
+
+  def handle_event("toggle_admin", _params, socket) do
+    {:noreply,
+     assign(socket,
+       admin_open?: not socket.assigns.admin_open?,
+       admin_auth_error: nil,
+       admin_config_error: nil
+     )}
+  end
+
+  def handle_event("close_admin", _params, socket) do
+    {:noreply, assign(socket, admin_open?: false, admin_auth_error: nil, admin_config_error: nil)}
+  end
+
+  def handle_event("lock_admin", _params, socket) do
+    {:noreply,
+     assign(socket,
+       admin_unlocked?: false,
+       admin_auth_error: nil,
+       admin_config_error: nil,
+       admin_auth_form: to_form(%{"token" => ""}, as: :admin_auth)
+     )}
+  end
+
+  def handle_event("unlock_admin", %{"admin_auth" => %{"token" => token}}, socket) do
+    case AdminAuth.authorize(token) do
+      :ok ->
+        {:noreply,
+         assign(socket,
+           admin_unlocked?: true,
+           admin_auth_error: nil,
+           admin_auth_form: to_form(%{"token" => ""}, as: :admin_auth)
+         )}
+
+      :disabled ->
+        {:noreply,
+         assign(socket,
+           admin_unlocked?: false,
+           admin_auth_error: "Admin controls disabled — set AIMONGUS_ADMIN_TOKEN to enable."
+         )}
+
+      :unauthorized ->
+        {:noreply,
+         assign(socket,
+           admin_unlocked?: false,
+           admin_auth_error: "Invalid admin token.",
+           admin_auth_form: to_form(%{"token" => ""}, as: :admin_auth)
+         )}
+    end
+  end
+
+  def handle_event("validate_admin_config", %{"match_config" => params}, socket) do
+    merged = Map.merge(@default_admin_config, params)
+
+    error =
+      case parse_admin_config(merged) do
+        {:ok, _overrides} -> nil
+        {:error, reason} -> reason
+      end
+
+    {:noreply,
+     assign(socket,
+       admin_config_params: merged,
+       admin_config_form: to_form(merged, as: :match_config),
+       admin_config_error: error
+     )}
+  end
+
+  def handle_event("start_admin_match", %{"match_config" => params}, socket) do
+    merged = Map.merge(@default_admin_config, params)
+
+    cond do
+      not AdminAuth.enabled?() or not socket.assigns.admin_unlocked? ->
+        {:noreply,
+         assign(socket,
+           admin_unlocked?: false,
+           admin_auth_error: "Admin session locked — enter token to continue."
+         )}
+
+      true ->
+        case parse_admin_config(merged) do
+          {:error, reason} ->
+            {:noreply,
+             assign(socket,
+               admin_config_params: merged,
+               admin_config_form: to_form(merged, as: :match_config),
+               admin_config_error: reason
+             )}
+
+          {:ok, overrides} ->
+            if Process.whereis(Manager) == nil do
+              {:noreply,
+               assign(socket,
+                 admin_config_params: merged,
+                 admin_config_form: to_form(merged, as: :match_config),
+                 admin_config_error: "Match manager is not running."
+               )}
+            else
+              :ok = Manager.new_match(Manager, overrides)
+
+              {:noreply,
+               socket
+               |> assign(
+                 admin_open?: false,
+                 admin_config_params: merged,
+                 admin_config_form: to_form(merged, as: :match_config),
+                 admin_config_error: nil
+               )
+               |> put_flash(:info, "New match started (#{overrides.agent_count} agents)")}
+            end
+        end
+    end
   end
 
   ## Match events
@@ -838,6 +971,84 @@ defmodule AimongusWeb.SpectateLive do
     top = 50 + 46 * :math.sin(angle)
     "left: #{Float.round(left, 2)}%; top: #{Float.round(top, 2)}%"
   end
+
+  @doc false
+  def admin_enabled?, do: AdminAuth.enabled?()
+
+  @doc false
+  def admin_role_summary(params) do
+    case parse_admin_config(params) do
+      {:ok, %{roles: roles, speed: speed}} ->
+        counts = Enum.frequencies(roles)
+
+        parts =
+          [:impostor, :sheriff, :medic, :vigilante, :jester, :serial_killer, :crewmate]
+          |> Enum.flat_map(fn role ->
+            case Map.get(counts, role, 0) do
+              0 -> []
+              1 -> [role_label(role)]
+              n -> ["#{n} #{role_label(role)}s"]
+            end
+          end)
+
+        Enum.join(parts, " · ") <> " · #{speed}x"
+
+      {:error, _reason} ->
+        "Adjust counts so roles fit inside the roster"
+    end
+  end
+
+  defp parse_admin_config(params) do
+    with {:ok, agent_count} <- parse_int_range(params["agent_count"], 3, 9, "Agent count"),
+         {:ok, impostors} <- parse_int_range(params["impostors"], 1, 3, "Impostors"),
+         {:ok, speed} <- parse_speed(params["speed"]) do
+      specials =
+        for {key, role} <- [
+              {"sheriff", :sheriff},
+              {"medic", :medic},
+              {"vigilante", :vigilante},
+              {"jester", :jester},
+              {"serial_killer", :serial_killer}
+            ],
+            truthy?(params[key]),
+            do: role
+
+      non_impostors = agent_count - impostors
+      crewmates = agent_count - impostors - length(specials)
+
+      cond do
+        impostors >= non_impostors ->
+          {:error, "Impostors must be fewer than remaining players."}
+
+        crewmates < 0 ->
+          {:error, "Selected roles exceed the agent count."}
+
+        true ->
+          roles =
+            List.duplicate(:impostor, impostors) ++
+              specials ++
+              List.duplicate(:crewmate, crewmates)
+
+          {:ok, %{agent_count: agent_count, roles: roles, speed: speed}}
+      end
+    end
+  end
+
+  defp parse_int_range(raw, min, max, label) do
+    case Integer.parse(to_string(raw || "")) do
+      {n, ""} when n >= min and n <= max -> {:ok, n}
+      _other -> {:error, "#{label} must be between #{min} and #{max}."}
+    end
+  end
+
+  defp parse_speed(raw) do
+    case Float.parse(to_string(raw || "")) do
+      {v, ""} when v >= 0.25 and v <= 8.0 -> {:ok, v}
+      _other -> {:error, "Speed must be between 0.25x and 8x."}
+    end
+  end
+
+  defp truthy?(val), do: val in [true, "true", "on", "1"]
 
   @doc false
   # Accent color for the winner banner.
