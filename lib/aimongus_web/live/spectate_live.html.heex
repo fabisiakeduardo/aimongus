@@ -1,5 +1,9 @@
 <% badge = phase_badge(assigns) %>
-<div class="h-screen w-screen flex flex-col bg-slate-950 text-slate-100 overflow-hidden">
+<div
+  id="sound-root"
+  phx-hook="SoundHook"
+  class="h-screen w-screen flex flex-col bg-slate-950 text-slate-100 overflow-hidden"
+>
   <header class="flex items-center gap-4 px-4 py-2 border-b border-slate-800 bg-slate-900/60">
     <div class="flex items-baseline gap-2">
       <span class="text-lg font-black tracking-widest text-rose-500">AIMONGUS</span>
@@ -18,6 +22,22 @@
       </span>
     </div>
     <div class="flex-1"></div>
+    <button
+      id="sound-toggle"
+      phx-click="toggle_sound"
+      class={[
+        "flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wider transition-colors",
+        (@muted && "border-rose-500/50 bg-rose-500/10 text-rose-300 hover:bg-rose-500/20") ||
+          "border-slate-700 text-slate-300 hover:bg-slate-800 hover:text-slate-100"
+      ]}
+      aria-label={(@muted && "Enable sound") || "Mute sound"}
+    >
+      <.icon
+        name={(@muted && "hero-speaker-x-mark") || "hero-speaker-wave"}
+        class="size-3.5"
+      />
+      {(@muted && "Enable sound") || "Mute sound"}
+    </button>
     <span class="text-[10px] uppercase tracking-wider text-slate-500">god view — spectators see all roles</span>
   </header>
 

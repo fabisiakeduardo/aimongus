@@ -188,6 +188,70 @@ defmodule AimongusWeb.SpectateLiveTest do
     end
   end
 
+  describe "sound events" do
+    test "match start, kill and meeting events push sound commands to the client",
+         %{conn: conn} do
+      id = start_match([%{id: "red", name: "Red"}, %{id: "blue", name: "Blue"}])
+
+      {:ok, view, _html} = live(conn, "/watch?match=#{id}")
+
+      broadcast(id, :match_started)
+      assert_push_event view, "sound", %{name: "ambient"}
+
+      broadcast(id, {:killed, "blue", "red", {3, 2}})
+      assert_push_event view, "sound", %{name: "kill"}
+
+      broadcast(id, {:body_reported, "red", {3, 2}})
+      assert_push_event view, "sound", %{name: "report"}
+
+      broadcast(id, {:button_pressed, "red"})
+      assert_push_event view, "sound", %{name: "report"}
+
+      broadcast(id, {:meeting_started, {:report, "red"}})
+      assert_push_event view, "sound", %{name: "siren"}
+    end
+
+    test "voting, ejection and game over push their stingers", %{conn: conn} do
+      id = start_match([%{id: "red", name: "Red"}, %{id: "blue", name: "Blue"}])
+
+      {:ok, view, _html} = live(conn, "/watch?match=#{id}")
+
+      broadcast(id, {:voted, "red", "blue"})
+      assert_push_event view, "sound", %{name: "vote"}
+
+      broadcast(id, {:ejected, "blue", :crewmate})
+      assert_push_event view, "sound", %{name: "eject"}
+
+      broadcast(id, {:game_over, :crew})
+      assert_push_event view, "sound", %{name: "win"}
+    end
+
+    test "an impostor/solo victory plays the lose stinger", %{conn: conn} do
+      id = start_match([%{id: "red", name: "Red"}])
+
+      {:ok, view, _html} = live(conn, "/watch?match=#{id}")
+
+      broadcast(id, {:game_over, :impostors})
+      assert_push_event view, "sound", %{name: "lose"}
+    end
+
+    test "the mute toggle flips the assign and syncs the hook", %{conn: conn} do
+      id = start_match([%{id: "red", name: "Red"}])
+
+      {:ok, view, html} = live(conn, "/watch?match=#{id}")
+      assert html =~ ~s(id="sound-toggle")
+      assert html =~ "Enable sound"
+
+      html = view |> element("#sound-toggle") |> render_click()
+      assert html =~ "Mute sound"
+      assert_push_event view, "sound", %{name: "control", muted: false, ambient: true}
+
+      html = view |> element("#sound-toggle") |> render_click()
+      assert html =~ "Enable sound"
+      assert_push_event view, "sound", %{name: "control", muted: true, ambient: false}
+    end
+  end
+
   describe "feed styling" do
     test "whisper lines are styled distinctly from meeting speech", %{conn: conn} do
       id = start_match([%{id: "red", name: "Red"}, %{id: "blue", name: "Blue"}])

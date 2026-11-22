@@ -65,6 +65,9 @@ defmodule AimongusWeb.SpectateLive do
         minds: %{},
         selected_agent: nil,
         winner: nil,
+        # starts muted: browsers block audio before the first user
+        # gesture, so the header toggle doubles as the unlock click
+        muted: true,
         feed: [],
         feed_seq: 0
       )
@@ -92,6 +95,20 @@ defmodule AimongusWeb.SpectateLive do
     {:noreply, assign(socket, selected_agent: nil)}
   end
 
+  # The SoundHook listens for "sound" pushes; `control` syncs mute state
+  # and whether the ambient hum should be running, so unmuting mid-match
+  # picks the hum up immediately. The toggle click is also the user
+  # gesture that satisfies the browser autoplay policy.
+  def handle_event("toggle_sound", _params, socket) do
+    muted = not socket.assigns.muted
+    ambient = not muted and ambient?(socket)
+
+    {:noreply,
+     socket
+     |> assign(muted: muted)
+     |> push_event("sound", %{name: "control", muted: muted, ambient: ambient})}
+  end
+
   ## Match events
 
   @impl true
@@ -101,7 +118,7 @@ defmodule AimongusWeb.SpectateLive do
   end
 
   def handle_info(:match_started, socket) do
-    {:noreply, socket |> refresh_state() |> feed(:system, "Match started")}
+    {:noreply, socket |> refresh_state() |> feed(:system, "Match started") |> sound("ambient")}
   end
 
   def handle_info({:role_assigned, id, role}, socket) do
@@ -150,6 +167,7 @@ defmodule AimongusWeb.SpectateLive do
         working: Map.delete(socket.assigns.working, victim)
       )
       |> feed(:event, "was killed by #{player_name(socket.assigns.players, by)}", player: victim)
+      |> sound("kill")
 
     {:noreply, socket}
   end
@@ -182,20 +200,22 @@ defmodule AimongusWeb.SpectateLive do
     room = GameMap.room_at(socket.assigns.map, pos) || "a corridor"
 
     {:noreply,
-     feed(
-       socket,
+     socket
+     |> feed(
        :system,
        "#{player_name(socket.assigns.players, id)} reported a body in #{room}"
-     )}
+     )
+     |> sound("report")}
   end
 
   def handle_info({:button_pressed, id}, socket) do
     {:noreply,
-     feed(
-       socket,
+     socket
+     |> feed(
        :system,
        "#{player_name(socket.assigns.players, id)} pressed the emergency button"
-     )}
+     )
+     |> sound("report")}
   end
 
   def handle_info(:meeting_called, socket) do
@@ -215,7 +235,7 @@ defmodule AimongusWeb.SpectateLive do
           "Meeting started"
       end
 
-    {:noreply, socket |> assign(phase: :meeting) |> feed(:system, text)}
+    {:noreply, socket |> assign(phase: :meeting) |> feed(:system, text) |> sound("siren")}
   end
 
   def handle_info({:speak_request, id}, socket) do
@@ -247,7 +267,7 @@ defmodule AimongusWeb.SpectateLive do
         do: "skipped their vote",
         else: "voted for #{player_name(socket.assigns.players, choice)}"
 
-    {:noreply, socket |> assign(votes: votes) |> feed(:event, text, player: id)}
+    {:noreply, socket |> assign(votes: votes) |> feed(:event, text, player: id) |> sound("vote")}
   end
 
   def handle_info({:ejected, id, role}, socket) do
@@ -263,6 +283,7 @@ defmodule AimongusWeb.SpectateLive do
       socket
       |> update_player(id, &%{&1 | alive?: false})
       |> feed(:system, text)
+      |> sound("eject")
 
     {:noreply, socket}
   end
@@ -293,6 +314,7 @@ defmodule AimongusWeb.SpectateLive do
       socket
       |> assign(phase: :game_over, winner: winner, speaking: nil)
       |> feed(:system, "Game over — #{winner_text(socket.assigns.players, winner)}")
+      |> sound(game_over_sound(winner))
 
     {:noreply, socket}
   end
@@ -380,6 +402,20 @@ defmodule AimongusWeb.SpectateLive do
       feed_seq: seq
     )
   end
+
+  # Push a named sound cue to the `SoundHook` JS hook. The client maps
+  # each name to a synthesized WebAudio cue and no-ops while muted.
+  defp sound(socket, name), do: push_event(socket, "sound", %{name: name})
+
+  # The ship hum loops while a match is live; game over silences it.
+  defp ambient?(socket) do
+    socket.assigns.running? and socket.assigns.phase not in [:waiting, :game_over]
+  end
+
+  # God-view framing: a crew victory is the "win" sting; impostors or a
+  # solo killer taking the match is the "lose" sting.
+  defp game_over_sound(:crew), do: "win"
+  defp game_over_sound(_other), do: "lose"
 
   ## Template helpers
 
