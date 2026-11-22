@@ -1,39 +1,46 @@
-##############################################
-#RRRRRR#####MMMMMM####CCCCCCCCCCC#####WWWWWWW#
-#RRRRRR#####MMMMMM####CCCCCCCCCCC#####WWWWWWW#
-#RRRRRR#####MT2MMM####CT10CBCCCCC#####WT3WWWW#
-#RRRRRR#####MMMMMM####CCCCCCCCCCC#####WWWWWWW#
-#RT1RRR#####MMMMMM####CCCCCCCCCCC#####WWWWWWW#
-#RRRRRR#######..##########..#############..###
-#RRRRRR......................................#
-#RRRRRR......................................#
-#RRRRRR###..########.......###################
-#RRRRRR###..########.......#OOOOOO####NNNNNNN#
-##########..########.......#OOOOOO####NNNNNNN#
-##########..########........OOT5OO####NNNT4NN#
-##########..########........OOOOOO####NNNNNNN#
-##########..########.......#OOOOOO####NNNNNNN#
-##########..########.......###..#########..###
-##########...................................#
-##########...................................#
-##########..######....#######..#########...###
-#EEEEEEEE#..######....#######..#######HHHHHHH#
-#EEEEEEEE#..######....#####AAAAAAA####HHHHHHH#
-#EEEEEEEE#..#GGGGGGGGGGGG##AAAAAAA####HHHHHHH#
-#EEEEEEEE...#GGGGGGGGGGGG##AAT8AAA####HHHHHHH#
-#EET6EEEE....GGGGGGGGGGGG##AAAAAAA####HHT9HHH#
-#EEEEEEEE#...GGT7GGGGGGGG##AAAAAAA####HHHHHHH#
-#EEEEEEEE####GGGGGGGGGGGG##AAAAAAA####HHHHHHH#
-#EEEEEEEE####GGGGGGGGGGGG#############HHHHHHH#
-##############################################
+########################################################
+########.##################CCCCCCCCCCCCC##WWWWWW#NNNNNN#
+#RRRRRR#.#UUUUUU#.#MMMMMM##CCCCCCCCCCCCC##WWT5WW.NNT6NN#
+#RRRRRR#.#UUT2UU#.#MMT3MM##CCCT4CCBCCCCC##WWWWWW#NNNNNN#
+#RRRRRR...UUUUUU..#MMMMMM##CCCCCCCCCCCCC##WWWWWW#NNNNNN#
+#RRRRRR#.#UUUUUU#.#MMMMMM..CCCCCCCCCCCCC##WWWWWW#NNNNNN#
+#RRT1RR#.#UUUUUU#.###.###.#CCCCCCCCCCCCC##.#.####..#####
+#RRRRRR#.#######...........######.########..#####..#####
+#RRRRRR#.#SSSS#..###############...#######.#OOOOO#.#####
+#RRRRRR#..SSSS...###############...#######.#OOT7O#.#####
+#RRRRRR..#SSSS#..#################.#######..OOOOO..#####
+#RRRRRR#.######..##############AAAAAAA####.#OOOOO#.#####
+########.#LLLLL#.##############AAT9AAA####.#######.#####
+########..LT13L..##############AAAAAAA####.######HHHHHH#
+########.#LLLLL#.##############AAAAAAA####.######HHHHHH#
+########.#LLLLL#.#################.#######.####..HHT8HH#
+########.###.###.################..#######.####.#HHHHHH#
+############.###.################..#######.####.#HHHHHH#
+############....................................###.####
+############.###..######.#####.#####.##########.###.####
+############.###..######.#GGGGGGGGGGGGGG#######.###.####
+############.#EEEEEEEE##.#GGGGGGGGGGGGGG#######.###.####
+############.#EEEEEEEE##.#GGGGGGGGGGGGGG#######.###.####
+############.#EEEEEEEE##..GGGGGGT10GGGGG########KKKKKKK#
+############..EEET12EE####GGGGGGGGGGGGGG.......#KKKKKKK#
+############.#EEEEEEEE####GGGGGGGGGGGGGG######..KKKKKKK#
+############.#EEEEEEEE####GGGGGGGGGGGGGG########KKKT11K#
+##############EEEEEEEE##########################KKKKKKK#
+################################################KKKKKKK#
+########################################################
+########################################################
 
 R: Reactor
+U: Upper Engine
+S: Security
+L: Lower Engine
 M: MedBay
 C: Cafeteria
 W: Weapons
 N: Navigation
 O: O2
-E: Electrical
-G: Storage
-A: Admin
 H: Shields
+A: Admin
+G: Storage
+K: Communications
+E: Electrical

@@ -752,13 +752,17 @@ defmodule AimongusWeb.SpectateLive do
   @room_palette %{
     "Admin" => 275,
     "Cafeteria" => 35,
+    "Communications" => 200,
     "Electrical" => 52,
+    "Lower Engine" => 320,
     "MedBay" => 195,
     "Navigation" => 218,
     "O2" => 160,
     "Reactor" => 262,
+    "Security" => 250,
     "Shields" => 140,
     "Storage" => 22,
+    "Upper Engine" => 305,
     "Weapons" => 345
   }
 
@@ -810,7 +814,11 @@ defmodule AimongusWeb.SpectateLive do
     "Electrical" => [{:panel, 0.5, 0.15}],
     "Storage" => [{:crate, 0.25, 0.6}, {:crate, 0.5, 0.3}, {:crate, 0.75, 0.6}],
     "Admin" => [{:admin_table, 0.5, 0.45}],
-    "Shields" => [{:console, 0.5, 0.5}]
+    "Shields" => [{:console, 0.5, 0.5}],
+    "Security" => [{:monitor, 0.5, 0.3}],
+    "Upper Engine" => [{:engine, 0.5, 0.5}],
+    "Lower Engine" => [{:engine, 0.5, 0.5}],
+    "Communications" => [{:console, 0.5, 0.35}]
   }
 
   defp room_props(map) do
@@ -1562,6 +1570,102 @@ defmodule AimongusWeb.SpectateLive do
         stroke="#67e8f9"
         stroke-width="1.4"
         opacity="0.7"
+      />
+    </g>
+    """
+  end
+
+  def prop_art(%{kind: :monitor} = assigns) do
+    ~H"""
+    <g>
+      <rect
+        x={s(assigns, 0.12)}
+        y={s(assigns, 0.35)}
+        width={s(assigns, 0.76)}
+        height={s(assigns, 0.42)}
+        rx={s(assigns, 0.05)}
+        fill="#3a342c"
+        stroke="#101823"
+        stroke-width="1"
+      />
+      <rect
+        x={s(assigns, 0.18)}
+        y={s(assigns, 0.1)}
+        width={s(assigns, 0.28)}
+        height={s(assigns, 0.22)}
+        rx={s(assigns, 0.03)}
+        fill="#0f2b33"
+        stroke="#101823"
+        stroke-width="0.8"
+      />
+      <rect
+        x={s(assigns, 0.54)}
+        y={s(assigns, 0.1)}
+        width={s(assigns, 0.28)}
+        height={s(assigns, 0.22)}
+        rx={s(assigns, 0.03)}
+        fill="#0f2b33"
+        stroke="#101823"
+        stroke-width="0.8"
+      />
+      <rect
+        x={s(assigns, 0.21)}
+        y={s(assigns, 0.14)}
+        width={s(assigns, 0.09)}
+        height={s(assigns, 0.09)}
+        fill="#67e8f9"
+        opacity="0.8"
+      />
+      <rect
+        x={s(assigns, 0.57)}
+        y={s(assigns, 0.14)}
+        width={s(assigns, 0.09)}
+        height={s(assigns, 0.09)}
+        fill="#4ade80"
+        opacity="0.8"
+      />
+    </g>
+    """
+  end
+
+  def prop_art(%{kind: :engine} = assigns) do
+    ~H"""
+    <g>
+      <ellipse
+        cx={s(assigns, 0.5)}
+        cy={s(assigns, 0.72)}
+        rx={s(assigns, 0.34)}
+        ry={s(assigns, 0.1)}
+        fill="#f97316"
+        opacity="0.5"
+      />
+      <rect
+        x={s(assigns, 0.16)}
+        y={s(assigns, 0.14)}
+        width={s(assigns, 0.68)}
+        height={s(assigns, 0.5)}
+        rx={s(assigns, 0.12)}
+        fill="#4b5563"
+        stroke="#101823"
+        stroke-width="1"
+      />
+      <rect
+        x={s(assigns, 0.28)}
+        y={s(assigns, 0.26)}
+        width={s(assigns, 0.44)}
+        height={s(assigns, 0.14)}
+        rx={s(assigns, 0.07)}
+        fill="#7dd3fc"
+        opacity="0.85"
+      />
+      <line
+        x1={s(assigns, 0.16)}
+        y1={s(assigns, 0.5)}
+        x2={s(assigns, 0.84)}
+        y2={s(assigns, 0.5)}
+        stroke="#101823"
+        stroke-width="1"
+        opacity="0.6"
       />
     </g>
     """

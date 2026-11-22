@@ -107,10 +107,11 @@ defmodule Aimongus.Game.MapTest do
 
       assert %Map{} = map
       names = Map.room_names(map)
-      assert length(names) in 8..10
+      assert length(names) in 12..15
 
       for expected <-
-            ~w(Cafeteria Weapons Navigation O2 Shields Electrical MedBay Storage Reactor Admin) do
+            ~w(Cafeteria Weapons Navigation O2 Shields Communications Electrical
+               MedBay Storage Reactor Admin Security) ++ ["Upper Engine", "Lower Engine"] do
         assert expected in names
       end
     end
