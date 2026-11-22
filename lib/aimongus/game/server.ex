@@ -24,7 +24,17 @@ defmodule Aimongus.Game.Server do
     * `submit_intent(match_id, player_id, intent)` — deterministic
       executor; returns `:ok` or `{:rejected, reason}` (the rejection is
       what Task 12 feeds back into the agent's memory)
-    * `state(match_id)` — the current `%Aimongus.Game.State{}`
+    * `state(match_id)` — the current `%Aimongus.Game.State{}` — **the
+      god view**: spectators only. Agents must never be given it; they
+      pull `view_for/2` instead
+    * `view_for(match_id, player_id)` — the per-player filtered view
+      `Aimongus.Agent.Server` builds each prompt from: the player's own
+      role/status/tasks, only the players and bodies `Rules.visible?/3`
+      lets them see, whispers they heard, meeting history, phase. Never
+      another player's role, cooldowns, or path
+    * `register_agent(match_id, player_id, pid)` — binds an agent-runtime
+      process to a player so the engine can route that player's events
+      to it as casts (see "Agent event routing" below)
     * `step(match_id)` — synchronous single world tick (test/debug tool;
       returns the post-tick state)
 
@@ -210,6 +220,31 @@ defmodule Aimongus.Game.Server do
   (it's phase-blind): at `start_match` (degenerate role mixes end
   immediately, which is correct Among Us semantics), after every kill
   and task completion, and when an ejection resolves.
+
+  ## Agent event routing
+
+  The `match:<id>` PubSub topic is god-view: it carries role
+  assignments, sheriff hints, votes and kill positions. Agent processes
+  (`Aimongus.Agent.Server`) therefore **never subscribe** to it. Instead
+  they call `register_agent/3`, and the engine pushes each agent only
+  the events that player is entitled to — as plain casts:
+
+    * `{:heard_whisper, %{from:, to:, audience:, text:}}` — only to
+      players inside the whisper's audience
+    * `:speak_request` — only to the player holding the floor
+    * `{:body_seen}` — only to players whose vision covers a new corpse
+      (checked server-side with `Rules.visible?/3` at kill time; the
+      cast carries no content — the corpse arrives via `view_for/2`)
+    * public meeting events to every registered agent:
+      `:match_started`, `{:meeting_started, reason}`,
+      `{:heard_speech, speaker, text | nil}`, `:voting_started`,
+      `{:voted, voter, choice}`, `{:ejected, id, role | nil}`,
+      `:no_ejection`, `:meeting_ended`, `{:game_over, winner}`
+
+  Everything else on the topic — `{:role_assigned, ...}`, `{:moved,
+  ...}`, `{:hint, ...}`, `{:killed, ...}`, `{:protected, ...}`,
+  `{:task_progress, ...}` — is deliberately never routed; agents learn
+  the world through `view_for/2` alone.
   """
 
   use GenServer
@@ -221,6 +256,7 @@ defmodule Aimongus.Game.Server do
   @room_candidates 8
   @max_whisper_bytes 500
   @max_speech_bytes 1_000
+  @heard_whisper_limit 10
 
   defstruct match_id: nil,
             state: nil,
@@ -230,7 +266,9 @@ defmodule Aimongus.Game.Server do
             match_deadline: nil,
             tick_ms: 100,
             auto_tick?: true,
-            shuffle_roles?: true
+            shuffle_roles?: true,
+            agents: %{},
+            heard_whispers: %{}
 
   ## Public API
 
@@ -254,9 +292,32 @@ defmodule Aimongus.Game.Server do
     GenServer.call(via(match_id), {:intent, player_id, intent})
   end
 
-  @doc "The authoritative `%State{}` snapshot."
+  @doc "The authoritative `%State{}` snapshot — god view, spectators only."
   @spec state(term()) :: State.t()
   def state(match_id), do: GenServer.call(via(match_id), :state)
+
+  @doc """
+  The filtered per-player view the agent runtime builds each prompt
+  from. See the moduledoc's "Agent event routing" and
+  `Aimongus.LLM.Prompt`'s `agent_view` contract for what is (and is not)
+  inside. `{:error, :unknown_player}` for unknown ids.
+  """
+  @spec view_for(term(), State.Player.id()) :: {:ok, map()} | {:error, :unknown_player}
+  def view_for(match_id, player_id) do
+    GenServer.call(via(match_id), {:view_for, player_id})
+  end
+
+  @doc """
+  Registers `pid` as the agent-runtime process playing `player_id` so
+  the engine can route that player's events to it as casts (see
+  "Agent event routing" in the moduledoc). Re-registering replaces the
+  pid (a restarted agent takes over seamlessly).
+  """
+  @spec register_agent(term(), State.Player.id(), pid()) ::
+          :ok | {:error, :unknown_player}
+  def register_agent(match_id, player_id, pid) when is_pid(pid) do
+    GenServer.call(via(match_id), {:register_agent, player_id, pid})
+  end
 
   @doc """
   Joins a lobby player (`State.add_player/2` attrs; `:personality`
@@ -308,6 +369,18 @@ defmodule Aimongus.Game.Server do
 
   @impl true
   def handle_call(:state, _from, server), do: {:reply, server.state, server}
+
+  def handle_call({:view_for, player_id}, _from, server) do
+    {:reply, agent_view(server, player_id), server}
+  end
+
+  def handle_call({:register_agent, player_id, pid}, _from, server) do
+    if Map.has_key?(server.state.players, player_id) do
+      {:reply, :ok, %{server | agents: Map.put(server.agents, player_id, pid)}}
+    else
+      {:reply, {:error, :unknown_player}, server}
+    end
+  end
 
   def handle_call({:add_player, attrs}, _from, server) do
     attrs = Map.new(attrs)
@@ -852,9 +925,27 @@ defmodule Aimongus.Game.Server do
       player = %{player | whisper_ready_at: state.tick + state.config.whisper_cooldown_ticks}
       server = put_in(server.state.players[id], player)
 
+      server = note_whisper(server, id, target, audience, text)
       broadcast(server, {:whisper, id, target, audience, text})
       {:ok, server}
     end
+  end
+
+  # Each hearer's own copy of the whisper is buffered per player —
+  # `view_for/2` serves it so a consumer that only pulls views still
+  # sees what the player heard. Bounded to the most recent
+  # @heard_whisper_limit so prompts stay small.
+  defp note_whisper(server, from, target, audience, text) do
+    whisper = %{from: from, to: target, audience: audience, text: text}
+
+    heard =
+      Enum.reduce(audience, server.heard_whispers, fn hearer, acc ->
+        Map.update(acc, hearer, [whisper], fn list ->
+          Enum.take(list ++ [whisper], -@heard_whisper_limit)
+        end)
+      end)
+
+    %{server | heard_whispers: heard}
   end
 
   ## Meetings
@@ -1168,8 +1259,188 @@ defmodule Aimongus.Game.Server do
 
   defp broadcast(server, event) do
     Phoenix.PubSub.broadcast(Aimongus.PubSub, "match:#{server.match_id}", event)
+    route_to_agents(server, event)
     :ok
   end
+
+  # Per-agent routing — see "Agent event routing" in the moduledoc.
+  # Agents never subscribe to the god-view topic; the engine casts each
+  # agent only the events its player may know. Everything not listed
+  # here is spectator-only and deliberately never reaches an agent.
+  defp route_to_agents(server, event) do
+    case event do
+      {:whisper, from, target, audience, text} ->
+        whisper = %{from: from, to: target, audience: audience, text: text}
+        cast_players(server, audience, {:heard_whisper, whisper})
+
+      {:speak_request, id} ->
+        cast_player(server, id, :speak_request)
+
+      :match_started ->
+        cast_all(server, :match_started)
+
+      {:meeting_started, reason} ->
+        cast_all(server, {:meeting_started, reason})
+
+      {:spoke, id, text} ->
+        cast_all(server, {:heard_speech, id, text})
+
+      :voting_started ->
+        cast_all(server, :voting_started)
+
+      {:voted, id, choice} ->
+        cast_all(server, {:voted, id, choice})
+
+      {:ejected, id, role} ->
+        cast_all(server, {:ejected, id, role})
+
+      :no_ejection ->
+        cast_all(server, :no_ejection)
+
+      :meeting_ended ->
+        cast_all(server, :meeting_ended)
+
+      {:game_over, winner} ->
+        cast_all(server, {:game_over, winner})
+
+      {:killed, _victim_id, _killer_id, pos} ->
+        # A bare "look again" nudge to agents whose vision covers the
+        # corpse — decided server-side with the post-kill state. The
+        # cast itself carries no information; the corpse (and who it is)
+        # reaches the agent through its next `view_for/2`.
+        for {id, pid} <- server.agents,
+            Rules.visible?(server.state, id, pos) do
+          GenServer.cast(pid, :body_seen)
+        end
+
+        :ok
+
+      _other ->
+        # Never routed: role_assigned, moved, task_progress/task_done,
+        # hint, killed (content), protected, kill_blocked,
+        # body_reported, button_pressed, meeting_called, match_timeout.
+        :ok
+    end
+
+    :ok
+  end
+
+  defp cast_all(server, message) do
+    Enum.each(server.agents, fn {_id, pid} -> GenServer.cast(pid, message) end)
+  end
+
+  defp cast_players(server, ids, message) do
+    Enum.each(ids, &cast_player(server, &1, message))
+  end
+
+  defp cast_player(server, id, message) do
+    case server.agents[id] do
+      nil -> :ok
+      pid -> GenServer.cast(pid, message)
+    end
+  end
+
+  ## Filtered agent view
+
+  # The view contract `Aimongus.LLM.Prompt.build/1` consumes — assembled
+  # strictly from what `player_id` may know: own internals, visible
+  # players/bodies (whitelisted fields only), whispers they heard, and
+  # the public meeting transcript.
+  defp agent_view(server, player_id) do
+    state = server.state
+
+    case state.players[player_id] do
+      nil ->
+        {:error, :unknown_player}
+
+      player ->
+        {:ok,
+         %{
+           id: player.id,
+           name: player.name,
+           color: player.color,
+           role: player.role,
+           phase: state.phase,
+           pos: player.pos,
+           room: GameMap.room_at(state.map, player.pos),
+           tick: state.tick,
+           alive?: player.alive?,
+           personality: player.personality,
+           role_mix: state.config.roles,
+           tasks: task_view(state, player),
+           vigilante_shot_used?: player.vigilante_shot_used?,
+           visible_players: visible_players(state, player),
+           visible_bodies: visible_bodies(state, player),
+           whispers: Map.get(server.heard_whispers, player_id, []),
+           meeting: meeting_view(server, player_id)
+         }}
+    end
+  end
+
+  # Whitelist — id/name/color/pos/room only. Role, cooldowns, path and
+  # alive-ness never leave the engine for another player's pawn.
+  defp visible_players(state, viewer) do
+    for {id, p} <- state.players,
+        id != viewer.id,
+        p.alive?,
+        Rules.visible?(state, viewer.id, p.pos) do
+      %{
+        id: p.id,
+        name: p.name,
+        color: p.color,
+        pos: p.pos,
+        room: GameMap.room_at(state.map, p.pos)
+      }
+    end
+    |> Enum.sort_by(& &1.id)
+  end
+
+  defp visible_bodies(state, viewer) do
+    for body <- state.bodies,
+        Rules.visible?(state, viewer.id, body.pos) do
+      %{
+        player_id: body.player_id,
+        name: state.players[body.player_id].name,
+        pos: body.pos,
+        room: GameMap.room_at(state.map, body.pos),
+        reported?: Map.get(body, :reported?, false)
+      }
+    end
+  end
+
+  defp task_view(state, player) do
+    player.tasks
+    |> Enum.map(fn {task_id, done?} ->
+      %{id: task_id, done?: done?, room: task_room(state, task_id)}
+    end)
+    |> Enum.sort_by(& &1.id)
+  end
+
+  defp task_room(state, task_id) do
+    case Map.get(state.map.tasks, task_id) do
+      nil -> nil
+      pos -> GameMap.room_at(state.map, pos)
+    end
+  end
+
+  # Public meeting transcript — every living player hears the whole
+  # discussion, so history is shared; `your_turn?` and `candidates` are
+  # the only per-player bits.
+  defp meeting_view(%{state: %{phase: :meeting}, meeting: %{} = meeting}, player_id) do
+    %{history: meeting.history, round: meeting.round, your_turn?: meeting.current == player_id}
+  end
+
+  defp meeting_view(%{state: %{phase: :voting} = state, meeting: %{} = meeting}, _id) do
+    candidates =
+      state
+      |> State.alive_players()
+      |> Enum.map(&%{id: &1.id, name: &1.name})
+      |> Enum.sort_by(& &1.id)
+
+    %{history: meeting.history, round: meeting.round, candidates: candidates}
+  end
+
+  defp meeting_view(_server, _player_id), do: nil
 
   defp manhattan({x1, y1}, {x2, y2}), do: abs(x1 - x2) + abs(y1 - y2)
 end

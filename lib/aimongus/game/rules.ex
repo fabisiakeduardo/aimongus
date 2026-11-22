@@ -216,11 +216,11 @@ defmodule Aimongus.Game.Rules do
 
   # Same row or column with every tile on the segment walkable.
   defp clear_line?(map, {x, y1}, {x, y2}) do
-    Enum.all?(y1..y2, fn y -> GameMap.walkable?(map, {x, y}) end)
+    Enum.all?(min(y1, y2)..max(y1, y2), fn y -> GameMap.walkable?(map, {x, y}) end)
   end
 
   defp clear_line?(map, {x1, y}, {x2, y}) do
-    Enum.all?(x1..x2, fn x -> GameMap.walkable?(map, {x, y}) end)
+    Enum.all?(min(x1, x2)..max(x1, x2), fn x -> GameMap.walkable?(map, {x, y}) end)
   end
 
   defp clear_line?(_map, _from, _to), do: false

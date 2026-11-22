@@ -13,6 +13,9 @@ defmodule Aimongus.Application do
       {Phoenix.PubSub, name: Aimongus.PubSub},
       # One GameServer per running match, looked up by match id.
       {Registry, keys: :unique, name: Aimongus.MatchRegistry},
+      # AgentServer LLM calls run here unlinked — a crashed or hung
+      # adapter can never take an agent process down with it.
+      {Task.Supervisor, name: Aimongus.AgentTaskSupervisor},
       # Start a worker by calling: Aimongus.Worker.start_link(arg)
       # {Aimongus.Worker, arg},
       # Start to serve requests, typically the last entry
