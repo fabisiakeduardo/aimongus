@@ -1001,12 +1001,26 @@ defmodule AimongusWeb.SpectateLive do
   def lights_out?(sabotage), do: match?(%{kind: :lights}, sabotage)
 
   @doc false
-  # Tile → CSS translate for a pawn, including the anti-overlap ring
-  # offset when several living beans share a cell.
-  def pawn_translate(players, id, cell) do
+  # Tile → pixel position for a pawn, including the anti-overlap ring
+  # offset when several living beans share a cell. Rendered both as the
+  # SVG `transform` attribute (no-JS fallback) and as `data-x/y` for the
+  # PawnDrift hook, which eases the bean toward each new position at
+  # display frame rate — the engine stays grid-faithful while motion
+  # reads as a continuous walk.
+  def pawn_x(players, id, cell) do
+    {x, _y} = pawn_px(players, id, cell)
+    fmt_px(x)
+  end
+
+  def pawn_y(players, id, cell) do
+    {_x, y} = pawn_px(players, id, cell)
+    fmt_px(y)
+  end
+
+  defp pawn_px(players, id, cell) do
     {ox, oy} = crowd_offset(players, id)
     {x, y} = players[id].pos
-    "translate(#{fmt_px(x * cell + ox)}px, #{fmt_px(y * cell + oy)}px)"
+    {x * cell + ox, y * cell + oy}
   end
 
   defp fmt_px(v) when is_integer(v), do: v

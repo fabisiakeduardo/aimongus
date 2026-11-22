@@ -86,11 +86,11 @@ defmodule AimongusWeb.SpectateLiveTest do
 
       {:ok, view, _html} = live(conn, "/watch?match=#{id}")
 
-      assert view |> element("#pawn-red") |> render() =~ "translate(52px, 52px)"
+      assert view |> element("#pawn-red") |> render() =~ "translate(52 52)"
 
       broadcast(id, {:moved, "red", {5, 4}})
 
-      assert view |> element("#pawn-red") |> render() =~ "translate(130px, 104px)"
+      assert view |> element("#pawn-red") |> render() =~ "translate(130 104)"
     end
 
     test "feed shows meeting speech, whispers and system events", %{conn: conn} do
@@ -145,7 +145,7 @@ defmodule AimongusWeb.SpectateLiveTest do
       refute html =~ "Waiting for match"
       assert html =~ ~s(id="pawn-red")
       assert html =~ ~s(id="pawn-blue")
-      assert view |> element("#pawn-blue") |> render() =~ "translate(156px, 52px)"
+      assert view |> element("#pawn-blue") |> render() =~ "translate(156 52)"
     end
 
     test "a moved event for a player whose join was missed still upserts a pawn", %{
@@ -157,7 +157,7 @@ defmodule AimongusWeb.SpectateLiveTest do
 
       broadcast(id, {:moved, "green", {3, 3}})
 
-      assert view |> element("#pawn-green") |> render() =~ "translate(78px, 78px)"
+      assert view |> element("#pawn-green") |> render() =~ "translate(78 78)"
     end
   end
 

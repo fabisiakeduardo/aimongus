@@ -26,11 +26,58 @@ import {hooks as colocatedHooks} from "phoenix-colocated/aimongus"
 import {SoundHook} from "./sound_hook"
 import topbar from "../vendor/topbar"
 
+// Pawns drift, they don't teleport. The engine moves on a grid and the
+// LiveView only ships tile coordinates; this hook eases the bean's
+// transform toward the latest target every animation frame, so motion
+// reads as a continuous Among-Us-style walk. The `transform` attribute
+// still carries the true position — if the hook never mounts, pawns
+// simply step tile-to-tile as before.
+const PawnDrift = {
+  mounted() {
+    this.tx = parseFloat(this.el.dataset.x)
+    this.ty = parseFloat(this.el.dataset.y)
+    this.x = this.tx
+    this.y = this.ty
+    this.el.style.transform = `translate(${this.x}px, ${this.y}px)`
+  },
+  updated() {
+    this.tx = parseFloat(this.el.dataset.x)
+    this.ty = parseFloat(this.el.dataset.y)
+    if (!this.raf) this.raf = requestAnimationFrame(() => this.step())
+  },
+  step() {
+    const dx = this.tx - this.x
+    const dy = this.ty - this.y
+    const dist = Math.hypot(dx, dy)
+    const tile = parseFloat(this.el.dataset.tile || "26")
+
+    if (dist < 0.4 || dist > tile * 6) {
+      // arrived — or a teleport (meeting gather, spawn): snap
+      this.x = this.tx
+      this.y = this.ty
+      this.apply()
+      this.raf = null
+      return
+    }
+
+    this.x += dx * 0.24
+    this.y += dy * 0.24
+    this.apply()
+    this.raf = requestAnimationFrame(() => this.step())
+  },
+  apply() {
+    this.el.style.transform = `translate(${this.x}px, ${this.y}px)`
+  },
+  destroyed() {
+    if (this.raf) cancelAnimationFrame(this.raf)
+  },
+}
+
 const csrfToken = document.querySelector("meta[name='csrf-token']").getAttribute("content")
 const liveSocket = new LiveSocket("/live", Socket, {
   longPollFallbackMs: 2500,
   params: {_csrf_token: csrfToken},
-  hooks: {...colocatedHooks, SoundHook},
+  hooks: {...colocatedHooks, SoundHook, PawnDrift},
 })
 
 // Show progress bar on live navigation and form submits

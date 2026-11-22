@@ -507,7 +507,11 @@
               ]}
               phx-click="select_agent"
               phx-value-id={id}
-              style={"transform: #{pawn_translate(@players, id, @cell)}; transition: transform 100ms linear;"}
+              phx-hook="PawnDrift"
+              transform={"translate(#{pawn_x(@players, id, @cell)} #{pawn_y(@players, id, @cell)})"}
+              data-x={pawn_x(@players, id, @cell)}
+              data-y={pawn_y(@players, id, @cell)}
+              data-tile={@cell}
               opacity={(player.alive? && "1") || "0.35"}
             >
               <circle
