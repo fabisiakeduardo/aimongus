@@ -29,6 +29,7 @@ defmodule AimongusWeb.SpectateLive do
   alias Aimongus.Game.Server
   alias Aimongus.Game.Map, as: GameMap
   alias Aimongus.Game.Personality
+  alias Aimongus.Game.State
 
   @feed_limit 200
   @cell 26
@@ -112,13 +113,20 @@ defmodule AimongusWeb.SpectateLive do
   ## Match events
 
   @impl true
-  def handle_info({:player_joined, _id, _name, _pos}, socket) do
+  def handle_info({:player_joined, id, name, pos}, socket) do
     # the event carries no color/personality — resync against the server
-    {:noreply, refresh_state(socket)}
+    # when there is one. During a replay there isn't, so the event
+    # itself must populate the pawn or nothing ever renders.
+    {:noreply, resync_or(socket, fn socket -> upsert_replay_player(socket, id, name, pos) end)}
   end
 
   def handle_info(:match_started, socket) do
-    {:noreply, socket |> refresh_state() |> feed(:system, "Match started") |> sound("ambient")}
+    socket =
+      resync_or(socket, fn socket ->
+        assign(socket, running?: true, phase: :free_roam)
+      end)
+
+    {:noreply, socket |> feed(:system, "Match started") |> sound("ambient")}
   end
 
   def handle_info({:role_assigned, id, role}, socket) do
@@ -130,9 +138,10 @@ defmodule AimongusWeb.SpectateLive do
       if Map.has_key?(socket.assigns.players, id) do
         update_player(socket, id, &%{&1 | pos: pos})
       else
-        # an event for a match we never caught the start of (e.g. the
-        # server was restarted under the same id) — resync
-        refresh_state(socket)
+        # an event for a match we never caught the start of — resync
+        # against the server if there is one; during a replay there
+        # isn't, so upsert a bare pawn from the event itself
+        resync_or(socket, fn socket -> upsert_replay_player(socket, id, nil, pos) end)
       end
 
     {:noreply, socket}
@@ -377,6 +386,37 @@ defmodule AimongusWeb.SpectateLive do
           :exit, _reason -> nil
         end
     end
+  end
+
+  # Resync against the GameServer when one is registered; run `fallback`
+  # when there isn't — replay mode, where broadcast events are the only
+  # source of truth.
+  defp resync_or(socket, fallback) do
+    if fetch_state(socket.assigns.match_id) do
+      refresh_state(socket)
+    else
+      fallback.(socket)
+    end
+  end
+
+  # A bare pawn built purely from a broadcast event — replay mode only,
+  # where no GameServer exists to resync from. Keeps any fields a prior
+  # event already supplied (a joined name survives a later bare :moved).
+  defp upsert_replay_player(socket, id, name, pos) do
+    player =
+      case socket.assigns.players[id] do
+        %State.Player{} = existing ->
+          %{existing | name: name || existing.name, pos: pos || existing.pos}
+
+        _other ->
+          %State.Player{id: id, name: name, pos: pos || {0, 0}}
+      end
+
+    assign(socket,
+      players: Map.put(socket.assigns.players, id, player),
+      running?: true,
+      phase: if(socket.assigns.phase == :waiting, do: :lobby, else: socket.assigns.phase)
+    )
   end
 
   defp update_player(socket, id, fun) do

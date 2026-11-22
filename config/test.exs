@@ -12,6 +12,11 @@ config :aimongus, AimongusWeb.Endpoint,
 # to exercise per-agent selection; safe to call with no opts.
 config :aimongus, :llm_adapters, %{"p1" => Aimongus.LLM.NoopAdapter, default: Aimongus.LLM.Stub}
 
+# The MatchManager stays off in test — it would spawn a real "live"
+# GameServer plus nine agent processes at app boot. Manager tests start
+# their own instances via start_supervised.
+config :aimongus, Aimongus.Match.Manager, enabled: false
+
 # Print only warnings and errors during test
 config :logger, level: :warning
 

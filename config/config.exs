@@ -16,6 +16,17 @@ config :aimongus,
 # point at OpenRouter.
 config :aimongus, :llm_adapters, %{default: Aimongus.LLM.DevinCLI}
 
+# Per-call USD cost estimates the MatchManager charges against
+# DAILY_LLM_BUDGET_USD. DevinCLI is $0 — it burns Devin quota, not a
+# billed API — and the Stub never leaves the test env. OpenRouter takes
+# a per-model map (`:default` covers unlisted models); update with real
+# pricing before pointing prod at a model.
+config :aimongus, :llm_call_costs, %{
+  Aimongus.LLM.DevinCLI => 0.0,
+  Aimongus.LLM.Stub => 0.0,
+  Aimongus.LLM.OpenRouter => %{default: 0.002}
+}
+
 # Configure the endpoint
 config :aimongus, AimongusWeb.Endpoint,
   url: [host: "localhost"],

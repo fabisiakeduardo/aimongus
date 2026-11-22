@@ -35,6 +35,11 @@ defmodule Aimongus.LLM.Client do
   @doc """
   Resolves `agent`'s configured adapter and calls its `complete/2`.
 
+  Every resolved call — success or error — is reported to
+  `Aimongus.Match.Manager.track_call/2` so the daily
+  `DAILY_LLM_BUDGET_USD` guard counts real spend. No manager running →
+  the report is a no-op.
+
   Returns `{:error, {:no_adapter, agent}}` when no adapter is
   configured for the agent (and no `:default` exists).
   """
@@ -42,8 +47,12 @@ defmodule Aimongus.LLM.Client do
           {:ok, String.t()} | {:error, term()}
   def complete(agent, prompt, opts \\ []) do
     case adapter_for(agent) do
-      nil -> {:error, {:no_adapter, agent}}
-      adapter -> adapter.complete(prompt, opts)
+      nil ->
+        {:error, {:no_adapter, agent}}
+
+      adapter ->
+        Aimongus.Match.Manager.track_call(adapter, model: opts[:model])
+        adapter.complete(prompt, opts)
     end
   end
 end

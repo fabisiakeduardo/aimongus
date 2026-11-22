@@ -322,7 +322,8 @@ defmodule Aimongus.Game.Server do
   @doc """
   Joins a lobby player (`State.add_player/2` attrs; `:personality`
   defaults to `Personality.random/0`). Returns `{:ok, player_id}` or
-  `{:error, reason}`.
+  `{:error, reason}`. `"skip"` (any case) is a reserved id — it's the
+  vote abstain sentinel — and is rejected with `{:error, :reserved_id}`.
   """
   @spec add_player(term(), map() | keyword()) :: {:ok, term()} | {:error, term()}
   def add_player(match_id, attrs) do
@@ -392,6 +393,9 @@ defmodule Aimongus.Game.Server do
       not Map.has_key?(attrs, :id) ->
         {:reply, {:error, :id_required}, server}
 
+      reserved_id?(attrs.id) ->
+        {:reply, {:error, :reserved_id}, server}
+
       Map.has_key?(server.state.players, attrs.id) ->
         {:reply, {:error, :duplicate_player}, server}
 
@@ -433,8 +437,20 @@ defmodule Aimongus.Game.Server do
 
   defp schedule_tick(tick_ms), do: Process.send_after(self(), :tick, tick_ms)
 
+  # "skip" is the vote-pass sentinel: `{:vote, :skip}` tallies as an
+  # abstention and the intent parser casts the literal string "skip" the
+  # same way. A player id colliding with it would make votes for that
+  # pawn indistinguishable from passes, so it can never join — boot
+  # config raises, `add_player/2` replies `{:error, :reserved_id}`.
+  defp reserved_id?(id), do: id |> to_string() |> String.downcase() == "skip"
+
   defp insert_player(server, attrs) do
     attrs = attrs |> Map.new() |> Map.put_new_lazy(:personality, &Personality.random/0)
+
+    if reserved_id?(attrs[:id]) do
+      raise ArgumentError, ~s("#{attrs[:id]}" is a reserved player id)
+    end
+
     state = State.add_player(server.state, attrs)
     player = state.players[attrs.id]
     broadcast(server, {:player_joined, player.id, player.name, player.pos})

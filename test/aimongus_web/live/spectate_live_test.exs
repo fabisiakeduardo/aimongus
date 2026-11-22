@@ -124,6 +124,43 @@ defmodule AimongusWeb.SpectateLiveTest do
     end
   end
 
+  describe "replays (no GameServer registered)" do
+    # The MatchManager's replay fallback re-broadcasts recorded events on
+    # a match topic that has no GameServer behind it. The view can't
+    # resync against Server.state/1 — join/move events must populate the
+    # players map directly or pawns never render.
+    test "player_joined and moved populate pawns without a server", %{conn: conn} do
+      id = match_id()
+
+      {:ok, view, html} = live(conn, "/watch?match=#{id}")
+      assert html =~ "Waiting for match"
+
+      broadcast(id, {:player_joined, "red", "Red", {4, 2}})
+      broadcast(id, {:player_joined, "blue", "Blue", {5, 2}})
+      broadcast(id, :match_started)
+      broadcast(id, {:role_assigned, "red", :impostor})
+      broadcast(id, {:moved, "blue", {6, 2}})
+
+      html = render(view)
+      refute html =~ "Waiting for match"
+      assert html =~ ~s(id="pawn-red")
+      assert html =~ ~s(id="pawn-blue")
+      assert view |> element("#pawn-blue") |> render() =~ "translate(156px, 52px)"
+    end
+
+    test "a moved event for a player whose join was missed still upserts a pawn", %{
+      conn: conn
+    } do
+      id = match_id()
+
+      {:ok, view, _html} = live(conn, "/watch?match=#{id}")
+
+      broadcast(id, {:moved, "green", {3, 3}})
+
+      assert view |> element("#pawn-green") |> render() =~ "translate(78px, 78px)"
+    end
+  end
+
   describe "mind panel" do
     test "clicking a pawn opens the panel with the personality card", %{conn: conn} do
       id =

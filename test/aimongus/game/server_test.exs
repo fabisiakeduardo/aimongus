@@ -90,6 +90,13 @@ defmodule Aimongus.Game.ServerTest do
       assert {:error, :not_lobby} = Server.add_player(id, %{id: "late"})
     end
 
+    test "add_player rejects the reserved id \"skip\"" do
+      id = start_server(%{players: []})
+      assert {:error, :reserved_id} = Server.add_player(id, %{id: "skip"})
+      assert {:error, :reserved_id} = Server.add_player(id, %{id: :skip})
+      assert {:error, :reserved_id} = Server.add_player(id, %{id: "Skip"})
+    end
+
     test "intents submitted in the lobby are rejected as wrong phase" do
       id = start_server()
       assert {:rejected, :wrong_phase} = Server.submit_intent(id, "p1", :nothing)
