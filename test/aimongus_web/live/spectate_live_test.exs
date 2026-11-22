@@ -310,4 +310,65 @@ defmodule AimongusWeb.SpectateLiveTest do
       assert whisper =~ "whispered"
     end
   end
+
+  describe "art direction & overlays" do
+    test "meeting and voting show the conference table overlay with seats and vote checks", %{
+      conn: conn
+    } do
+      id = start_match([%{id: "red", name: "Red"}, %{id: "blue", name: "Blue"}])
+
+      {:ok, view, _html} = live(conn, "/watch?match=#{id}")
+      refute has_element?(view, "#meeting-overlay")
+
+      broadcast(id, {:meeting_started, {:button, "red"}})
+      assert has_element?(view, "#meeting-overlay")
+      assert view |> element("#meeting-overlay") |> render() =~ "Emergency meeting"
+
+      broadcast(id, :voting_started)
+      assert view |> element("#meeting-overlay") |> render() =~ "Vote now"
+
+      broadcast(id, {:voted, "red", "blue"})
+      assert view |> element("#meeting-overlay") |> render() =~ "✓"
+
+      broadcast(id, :meeting_ended)
+      refute has_element?(view, "#meeting-overlay")
+    end
+
+    test "kill emits a flash overlay that clears on :fx_clear", %{conn: conn} do
+      id = start_match([%{id: "red", pos: {2, 2}}, %{id: "blue", pos: {3, 2}}])
+
+      {:ok, view, _html} = live(conn, "/watch?match=#{id}")
+
+      broadcast(id, {:killed, "blue", "red", {3, 2}})
+      assert has_element?(view, "#kill-flash-1")
+      assert has_element?(view, "#fx-1")
+
+      send(view.pid, {:fx_clear, 1})
+      refute has_element?(view, "#kill-flash-1")
+      refute has_element?(view, "#fx-1")
+    end
+
+    test "ejection adds the drift class and a new match_started resets it", %{conn: conn} do
+      id = start_match([%{id: "red", name: "Red"}, %{id: "blue", name: "Blue"}])
+
+      {:ok, view, _html} = live(conn, "/watch?match=#{id}")
+
+      broadcast(id, {:ejected, "blue", :impostor})
+      assert view |> element("#pawn-blue") |> render() =~ "ejected"
+
+      broadcast(id, {:game_over, :crew})
+      assert has_element?(view, "#gameover-banner")
+
+      broadcast(id, :match_started)
+      refute view |> element("#pawn-blue") |> render() =~ "ejected"
+      refute has_element?(view, "#gameover-banner")
+    end
+
+    test "wraps the spectator view in the game layout with flash_group", %{conn: conn} do
+      id = start_match([%{id: "red", name: "Red"}])
+
+      {:ok, view, _html} = live(conn, "/watch?match=#{id}")
+      assert has_element?(view, "#flash-group")
+    end
+  end
 end

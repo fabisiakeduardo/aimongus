@@ -3,6 +3,7 @@
 
 @import "tailwindcss" source(none);
 @import "phoenix-colocated/aimongus/colocated.css";
+@import "./game.css";
 @source "../css";
 @source "../js";
 @source "../../lib/aimongus_web";
@@ -89,6 +90,13 @@
   --border: 1.5px;
   --depth: 1;
   --noise: 0;
+}
+
+/* AImongUS art direction: a sci-fi display face for titles/labels and a
+   console-flavored mono for the event log. Loaded in root.html.heex. */
+@theme {
+  --font-display: "Orbitron", "Rajdhani", "Segoe UI", sans-serif;
+  --font-log: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
 }
 
 /* Add variants based on LiveView classes */

@@ -55,6 +55,11 @@ defmodule AimongusWeb.SpectateLive do
         map: map,
         cell: @cell,
         room_labels: room_labels(map),
+        room_hues: room_hues(map),
+        decor: map_decor(map),
+        fx: [],
+        fx_seq: 0,
+        ejected_ids: MapSet.new(),
         running?: false,
         phase: :waiting,
         players: %{},
@@ -122,7 +127,17 @@ defmodule AimongusWeb.SpectateLive do
 
   def handle_info(:match_started, socket) do
     socket =
-      resync_or(socket, fn socket ->
+      socket
+      |> assign(
+        ejected_ids: MapSet.new(),
+        bodies: [],
+        working: %{},
+        speaking: nil,
+        votes: %{},
+        minds: %{},
+        winner: nil
+      )
+      |> resync_or(fn socket ->
         assign(socket, running?: true, phase: :free_roam)
       end)
 
@@ -136,7 +151,9 @@ defmodule AimongusWeb.SpectateLive do
   def handle_info({:moved, id, pos}, socket) do
     socket =
       if Map.has_key?(socket.assigns.players, id) do
-        update_player(socket, id, &%{&1 | pos: pos})
+        socket
+        |> update_player(id, &%{&1 | pos: pos})
+        |> assign(working: Map.delete(socket.assigns.working, id))
       else
         # an event for a match we never caught the start of — resync
         # against the server if there is one; during a replay there
@@ -176,6 +193,7 @@ defmodule AimongusWeb.SpectateLive do
         working: Map.delete(socket.assigns.working, victim)
       )
       |> feed(:event, "was killed by #{player_name(socket.assigns.players, by)}", player: victim)
+      |> fx(pos, :kill)
       |> sound("kill")
 
     {:noreply, socket}
@@ -214,17 +232,21 @@ defmodule AimongusWeb.SpectateLive do
        :system,
        "#{player_name(socket.assigns.players, id)} reported a body in #{room}"
      )
+     |> fx(pos, :ping)
      |> sound("report")}
   end
 
   def handle_info({:button_pressed, id}, socket) do
+    socket =
+      socket
+      |> feed(
+        :system,
+        "#{player_name(socket.assigns.players, id)} pressed the emergency button"
+      )
+      |> sound("report")
+
     {:noreply,
-     socket
-     |> feed(
-       :system,
-       "#{player_name(socket.assigns.players, id)} pressed the emergency button"
-     )
-     |> sound("report")}
+     if(socket.assigns.map.button, do: fx(socket, socket.assigns.map.button, :ping), else: socket)}
   end
 
   def handle_info(:meeting_called, socket) do
@@ -291,6 +313,7 @@ defmodule AimongusWeb.SpectateLive do
     socket =
       socket
       |> update_player(id, &%{&1 | alive?: false})
+      |> assign(ejected_ids: MapSet.put(socket.assigns.ejected_ids, id))
       |> feed(:system, text)
       |> sound("eject")
 
@@ -334,6 +357,14 @@ defmodule AimongusWeb.SpectateLive do
     {:noreply, assign(socket, minds: Map.put(socket.assigns.minds, id, summary))}
   end
 
+  # Self-cleanup for one-shot map effects (kill flash, report ping): the
+  # entry is dropped once its animation has finished. If the message is
+  # lost the leftover is invisible anyway — every fx animation ends on a
+  # zero-opacity frame.
+  def handle_info({:fx_clear, seq}, socket) do
+    {:noreply, assign(socket, fx: Enum.reject(socket.assigns.fx, &(&1.seq == seq)))}
+  end
+
   def handle_info(_unknown, socket), do: {:noreply, socket}
 
   ## State
@@ -352,24 +383,33 @@ defmodule AimongusWeb.SpectateLive do
           votes: %{},
           minds: %{},
           selected_agent: nil,
-          winner: nil
+          winner: nil,
+          ejected_ids: MapSet.new()
         )
 
       state ->
         # the match may run a non-bundled map — resync everything
         selected = socket.assigns.selected_agent
 
+        ejected =
+          MapSet.filter(socket.assigns.ejected_ids, fn id ->
+            match?(%{alive?: false}, state.players[id])
+          end)
+
         assign(socket,
           running?: true,
           phase: state.phase,
           map: state.map,
           room_labels: room_labels(state.map),
+          room_hues: room_hues(state.map),
+          decor: map_decor(state.map),
           players: state.players,
           bodies: state.bodies,
           task_pool: state.tasks,
           working: %{},
           selected_agent: if(Map.has_key?(state.players, selected), do: selected),
-          winner: state.winner
+          winner: state.winner,
+          ejected_ids: ejected
         )
     end
   end
@@ -447,6 +487,19 @@ defmodule AimongusWeb.SpectateLive do
   # each name to a synthesized WebAudio cue and no-ops while muted.
   defp sound(socket, name), do: push_event(socket, "sound", %{name: name})
 
+  # Queue a one-shot map effect (`:kill` flash, `:ping` report ring) at a
+  # tile position. Entries self-clear via `{:fx_clear, seq}` a beat after
+  # their animation ends.
+  defp fx(socket, pos, kind) do
+    seq = socket.assigns.fx_seq + 1
+    Process.send_after(self(), {:fx_clear, seq}, 2_500)
+
+    assign(socket,
+      fx: Enum.take([%{seq: seq, kind: kind, pos: pos} | socket.assigns.fx], 12),
+      fx_seq: seq
+    )
+  end
+
   # The ship hum loops while a match is live; game over silences it.
   defp ambient?(socket) do
     socket.assigns.running? and socket.assigns.phase not in [:waiting, :game_over]
@@ -508,11 +561,175 @@ defmodule AimongusWeb.SpectateLive do
   @doc false
   def tasks_total(task_pool), do: map_size(task_pool)
 
+  ## Map art direction
+  #
+  # The map renders as a "stylized space station seen from above": every
+  # room gets its own hue, floors checker two shades of that hue, walls
+  # cast inner shadows onto neighbouring floor, doors get amber sills,
+  # and each room is ringed by a neon edge drawn along its perimeter.
+
+  # Curated hue per bundled room name (all distinct); anything else
+  # falls back to a curated wheel indexed by sorted-name order, so
+  # custom maps still get well-separated colors.
+  @room_palette %{
+    "Admin" => 275,
+    "Cafeteria" => 35,
+    "Electrical" => 52,
+    "MedBay" => 195,
+    "Navigation" => 218,
+    "O2" => 160,
+    "Reactor" => 262,
+    "Shields" => 140,
+    "Storage" => 22,
+    "Weapons" => 345
+  }
+
+  @palette_wheel [205, 160, 35, 275, 345, 120, 300, 22, 52, 190, 320, 80]
+
+  @dirs4 [{1, 0}, {-1, 0}, {0, 1}, {0, -1}]
+
   @doc false
-  # deterministic pastel tile tint per room — distinct rooms, no config
-  def room_tint(name) do
-    hue = name |> String.to_charlist() |> Enum.sum() |> rem(360)
-    "hsl(#{hue}, 35%, 20%)"
+  def room_hues(map) do
+    map.rooms
+    |> Map.keys()
+    |> Enum.sort()
+    |> Enum.with_index()
+    |> Map.new(fn {name, i} ->
+      hue =
+        Map.get(@room_palette, name) ||
+          Enum.at(@palette_wheel, rem(i, length(@palette_wheel)))
+
+      {name, hue}
+    end)
+  end
+
+  # Static per-map decoration derived once: neon room-edge paths, wall
+  # shadow sides, and door sills (corridor tiles touching a room).
+  defp map_decor(map) do
+    %{
+      edges: room_edge_paths(map),
+      shadows: floor_shadows(map),
+      sills: door_sills(map),
+      doors: door_tiles(map)
+    }
+  end
+
+  # One SVG path per room tracing every boundary segment where the room
+  # meets something that isn't itself (wall, corridor, another room).
+  defp room_edge_paths(map) do
+    for {name, positions} <- map.rooms do
+      cells = MapSet.new(positions)
+
+      d =
+        for {x, y} <- positions,
+            {dx, dy} <- @dirs4,
+            not MapSet.member?(cells, {x + dx, y + dy}) do
+          edge_segment(x, y, dx, dy)
+        end
+        |> Enum.join(" ")
+
+      %{name: name, d: d}
+    end
+  end
+
+  defp edge_segment(x, y, dx, dy) do
+    c = @cell
+
+    cond do
+      dx == 1 -> "M#{(x + 1) * c} #{y * c}v#{c}"
+      dx == -1 -> "M#{x * c} #{y * c}v#{c}"
+      dy == 1 -> "M#{x * c} #{(y + 1) * c}h#{c}"
+      dy == -1 -> "M#{x * c} #{y * c}h#{c}"
+    end
+  end
+
+  # Every floor tile side that touches a wall (or the void beyond the
+  # hull) gets a soft shadow — that's what makes walls feel raised.
+  # Entries are ready-to-render pixel rects plus the gradient id suffix.
+  defp floor_shadows(map) do
+    for {{x, y}, ch} <- map.tiles,
+        ch != "#",
+        {dx, dy} <- @dirs4,
+        Map.get(map.tiles, {x + dx, y + dy}, "#") == "#" do
+      Map.put(shadow_rect(x, y, dx, dy), :side, shadow_side(dx, dy))
+    end
+  end
+
+  defp shadow_side(0, -1), do: :n
+  defp shadow_side(0, 1), do: :s
+  defp shadow_side(-1, 0), do: :w
+  defp shadow_side(1, 0), do: :e
+
+  defp shadow_rect(x, y, dx, dy) do
+    c = @cell
+    t = 6
+
+    cond do
+      dy == -1 -> %{x: x * c, y: y * c, w: c, h: t}
+      dy == 1 -> %{x: x * c, y: (y + 1) * c - t, w: c, h: t}
+      dx == -1 -> %{x: x * c, y: y * c, w: t, h: c}
+      dx == 1 -> %{x: (x + 1) * c - t, y: y * c, w: t, h: c}
+    end
+  end
+
+  # Corridor tiles that share a side with a room are doorways; the sill
+  # is drawn on the room-facing edge of the corridor tile.
+  defp door_sills(map) do
+    for {{x, y}, "."} <- map.tiles,
+        {dx, dy} <- @dirs4,
+        room_letter?(Map.get(map.tiles, {x + dx, y + dy})) do
+      sill_rect(x, y, dx, dy)
+    end
+  end
+
+  defp door_tiles(map) do
+    MapSet.new(door_sills(map), &{&1.tile_x, &1.tile_y})
+  end
+
+  defp sill_rect(x, y, dx, dy) do
+    c = @cell
+
+    rect =
+      cond do
+        dy == -1 -> %{x: x * c + 3, y: y * c + 1, w: c - 6, h: 2.5}
+        dy == 1 -> %{x: x * c + 3, y: (y + 1) * c - 3.5, w: c - 6, h: 2.5}
+        dx == -1 -> %{x: x * c + 1, y: y * c + 3, w: 2.5, h: c - 6}
+        dx == 1 -> %{x: (x + 1) * c - 3.5, y: y * c + 3, w: 2.5, h: c - 6}
+      end
+
+    Map.merge(rect, %{tile_x: x, tile_y: y})
+  end
+
+  defp room_letter?(ch), do: is_binary(ch) and ch != "#" and ch != "."
+
+  @doc false
+  # Checkerboard floor fill: rooms tint two shades of their hue,
+  # corridors two shades of steel-blue, walls near-black, doorway tiles
+  # a hair warmer so thresholds read.
+  def tile_fill(map, hues, doors, {x, y} = pos) do
+    alt? = rem(x + y, 2) == 0
+
+    case tile_kind(map, pos) do
+      :wall ->
+        "#060a13"
+
+      :corridor ->
+        cond do
+          MapSet.member?(doors, pos) -> "#1b2340"
+          alt? -> "#151d30"
+          true -> "#121a2b"
+        end
+
+      {:room, name} ->
+        hue = Map.get(hues, name, 215)
+        if alt?, do: "hsl(#{hue}, 45%, 16%)", else: "hsl(#{hue}, 45%, 13%)"
+    end
+  end
+
+  @doc false
+  # Neon edge color for a room's perimeter path.
+  def room_edge_color(hues, name) do
+    "hsl(#{Map.get(hues, name, 215)}, 90%, 62%)"
   end
 
   @doc false
@@ -536,6 +753,12 @@ defmodule AimongusWeb.SpectateLive do
 
   @doc false
   def alive_count(players), do: Enum.count(players, fn {_id, p} -> p.alive? end)
+
+  @doc false
+  # Living players in pawn render order — seats around the meeting table.
+  def alive_players(players) do
+    for {id, p} <- sorted_players(players), p.alive?, do: {id, p}
+  end
 
   @doc false
   def feed_class(entry), do: "feed-item feed-#{entry.kind}"
@@ -577,6 +800,53 @@ defmodule AimongusWeb.SpectateLive do
   @doc false
   def pawn_color(player) do
     named_color(player.color) || fallback_color(player.id)
+  end
+
+  @doc false
+  # Darkened variant of a "#rrggbb" pawn color — used for the backpack
+  # and leg shading so the sprite reads as one shaded object.
+  def shade("#" <> _ = hex, factor) do
+    <<r, g, b>> = hex |> String.trim_leading("#") |> Base.decode16!(case: :mixed)
+    "#" <> Base.encode16(<<round(r * factor), round(g * factor), round(b * factor)>>)
+  end
+
+  def shade(_other, _factor), do: "#334155"
+
+  @doc false
+  # Per-pawn animation offset so the idle bobs don't move in lockstep.
+  def bob_delay(id), do: rem(:erlang.phash2(id), 2600)
+
+  @doc false
+  def meeting?(phase), do: phase in [:meeting, :voting]
+
+  @doc false
+  # Meeting-banner copy: hazard-yellow while discussing, alarm-red once
+  # the vote is on.
+  def meeting_banner(phase) do
+    case phase do
+      :meeting -> {"Emergency meeting", ""}
+      :voting -> {"Vote now", "voting"}
+      _other -> {"Emergency meeting", ""}
+    end
+  end
+
+  @doc false
+  # Chips around the meeting table: absolute-positioned on an ellipse.
+  def seat_style(index, count) do
+    angle = 2 * :math.pi() * index / max(count, 1) - :math.pi() / 2
+    left = 50 + 46 * :math.cos(angle)
+    top = 50 + 46 * :math.sin(angle)
+    "left: #{Float.round(left, 2)}%; top: #{Float.round(top, 2)}%"
+  end
+
+  @doc false
+  # Accent color for the winner banner.
+  def winner_accent(winner) do
+    case winner do
+      :crew -> "#22d3ee"
+      :impostors -> "#f87171"
+      _other -> "#fbbf24"
+    end
   end
 
   @colors %{

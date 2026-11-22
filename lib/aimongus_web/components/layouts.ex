@@ -73,6 +73,20 @@ defmodule AimongusWeb.Layouts do
   end
 
   @doc """
+  Full-bleed dark layout for the spectator game view — omits the default
+  Phoenix navbar while keeping the reconnect and flash banners intact.
+  """
+  attr :flash, :map, required: true, doc: "the map of flash messages"
+  slot :inner_block, required: true
+
+  def game(assigns) do
+    ~H"""
+    {render_slot(@inner_block)}
+    <.flash_group flash={@flash} />
+    """
+  end
+
+  @doc """
   Shows the flash group with standard titles and content.
 
   ## Examples
