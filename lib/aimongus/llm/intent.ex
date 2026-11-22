@@ -21,7 +21,8 @@ defmodule Aimongus.LLM.Intent do
       `{:whisper, text, id | nil}`
     * `"speak"` — `text` → `{:speak, text}`
     * `"vote"` — `target`: player id or `"skip"` → `{:vote, id | :skip}`
-    * `"report"`, `"press_button"`, `"nothing"` → bare atoms, no fields
+    * `"sabotage"` — `target`: `"lights"` or `"reactor"` → `{:sabotage, kind}`
+    * `"report"`, `"press_button"`, `"fix"`, `"nothing"` → bare atoms, no fields
 
   Unknown types, missing fields, and malformed JSON all return
   `{:error, reason}` — the parser is syntactic only; the game server
@@ -87,6 +88,8 @@ defmodule Aimongus.LLM.Intent do
       "speak" -> take(intent, "text", &cast_string/1) |> tagged(:speak)
       "vote" -> take(intent, "target", &cast_vote_choice/1) |> tagged(:vote)
       "whisper" -> cast_whisper(intent)
+      "sabotage" -> take(intent, "target", &cast_sabotage_kind/1) |> tagged(:sabotage)
+      "fix" -> {:ok, :fix}
       "report" -> {:ok, :report}
       "press_button" -> {:ok, :press_button}
       "nothing" -> {:ok, :nothing}
@@ -125,6 +128,11 @@ defmodule Aimongus.LLM.Intent do
   defp cast_vote_choice("skip"), do: {:ok, :skip}
   defp cast_vote_choice(value) when is_binary(value), do: {:ok, value}
   defp cast_vote_choice(_other), do: :error
+
+  # Whitelist — never String.to_atom/1 on model output.
+  defp cast_sabotage_kind("lights"), do: {:ok, :lights}
+  defp cast_sabotage_kind("reactor"), do: {:ok, :reactor}
+  defp cast_sabotage_kind(_other), do: :error
 
   defp take(map, field, cast) do
     case Map.fetch(map, field) do

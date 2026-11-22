@@ -504,10 +504,47 @@ defmodule Aimongus.Game.Server do
     |> Map.keys()
     |> Enum.sort()
     |> Enum.reduce(server, &step_player(&2, &1))
+    |> advance_sabotage()
   end
 
   defp step_player(server, id) do
     server |> advance_position(id) |> advance_action(id)
+  end
+
+  # Runs after every player step in a free-roam tick: fixers channel the
+  # repair, a cleared sabotage ends, and a reactor countdown that hits
+  # zero ends the match for the impostors.
+  defp advance_sabotage(%{state: %{sabotage: nil}} = server), do: server
+
+  defp advance_sabotage(server) do
+    state = server.state
+    sabotage = state.sabotage
+
+    standing =
+      for id <- sabotage.fixers,
+          Rules.can_fix?(state, id),
+          do: id
+
+    progress = sabotage.progress + length(standing)
+    fixers = MapSet.new(standing)
+    server = put_in(server.state.sabotage, %{sabotage | progress: progress, fixers: fixers})
+    sabotage = server.state.sabotage
+
+    cond do
+      progress >= state.config.sabotage_fix_ticks ->
+        server = put_in(server.state.sabotage, nil)
+        broadcast(server, {:sabotage_fixed, sabotage.kind, standing})
+        server
+
+      sabotage.ends_at_tick != nil and server.state.tick >= sabotage.ends_at_tick ->
+        broadcast(server, {:meltdown, :reactor})
+        server = %{server | state: %{server.state | phase: :game_over, winner: :impostors}}
+        broadcast(server, {:game_over, :impostors})
+        server
+
+      true ->
+        server
+    end
   end
 
   defp advance_position(server, id) do
@@ -598,6 +635,9 @@ defmodule Aimongus.Game.Server do
   defp dispatch_intent(server, id, {:whisper, text, target}),
     do: exec_whisper(server, id, text, target)
 
+  defp dispatch_intent(server, id, {:sabotage, kind}), do: exec_sabotage(server, id, kind)
+  defp dispatch_intent(server, id, :fix), do: exec_fix(server, id)
+
   # speak/vote are real intents — just wrong phase while roaming
   defp dispatch_intent(server, _id, {:speak, _}), do: {{:rejected, :wrong_phase}, server}
   defp dispatch_intent(server, _id, {:vote, _}), do: {{:rejected, :wrong_phase}, server}
@@ -618,12 +658,13 @@ defmodule Aimongus.Game.Server do
     case resolve_destination(map, from, dest) do
       {:ok, path} ->
         # Pathfind includes `from` as the first element — drop it.
+        # Moving also abandons any sabotage fix the player was channeling.
         server = %{
           put_in(server.state.players[id].path, tl(path))
           | actions: Map.delete(server.actions, id)
         }
 
-        {:ok, server}
+        {:ok, drop_fixer(server, id)}
 
       {:error, reason} ->
         {{:rejected, reason}, server}
@@ -907,6 +948,11 @@ defmodule Aimongus.Game.Server do
       Rules.distance(player.pos, state.map.button) > state.config.button_range ->
         {{:rejected, :not_at_button}, server}
 
+      state.sabotage != nil ->
+        # Among Us rule: the emergency button is dead while a sabotage
+        # is active — the crisis has to be fixed first
+        {{:rejected, :sabotage_active}, server}
+
       true ->
         broadcast(server, {:button_pressed, id})
         {:ok, call_meeting(server, {:button, id})}
@@ -945,6 +991,100 @@ defmodule Aimongus.Game.Server do
       broadcast(server, {:whisper, id, target, audience, text})
       {:ok, server}
     end
+  end
+
+  # `:lights` blinds the living until repaired; `:reactor` is a fuse —
+  # if nobody fixes it before `ends_at_tick` the impostors win. Only one
+  # sabotage runs at a time; the saboteur's ability slot carries the
+  # cooldown. Kinds the map can't host (no fix room) are rejected so a
+  # sabotage can't become unfixable.
+  defp exec_sabotage(server, id, kind) do
+    state = server.state
+    player = state.players[id]
+
+    rejection =
+      cond do
+        not player.alive? -> :dead
+        kind not in Rules.sabotage_kinds() -> :unknown_sabotage
+        player.role not in [:impostor, :serial_killer] -> :cannot_sabotage
+        state.sabotage != nil -> :sabotage_active
+        state.tick < player.ability_ready_at -> {:cooldown, player.ability_ready_at - state.tick}
+        fix_room_missing?(state, kind) -> :unfixable_sabotage
+        true -> nil
+      end
+
+    if rejection do
+      {{:rejected, rejection}, server}
+    else
+      ends_at =
+        if kind == :reactor,
+          do: state.tick + state.config.reactor_meltdown_ticks,
+          else: nil
+
+      sabotage = %{
+        kind: kind,
+        by: id,
+        started_tick: state.tick,
+        ends_at_tick: ends_at,
+        fixers: MapSet.new(),
+        progress: 0
+      }
+
+      player = %{player | ability_ready_at: state.tick + state.config.sabotage_cooldown_ticks}
+
+      server = %{
+        server
+        | state: %{state | sabotage: sabotage, players: Map.put(state.players, id, player)}
+      }
+
+      broadcast(server, {:sabotaged, kind, id, meltdown_seconds(state, kind)})
+      {:ok, server}
+    end
+  end
+
+  defp fix_room_missing?(state, kind) do
+    case Rules.fix_room(kind) do
+      nil -> true
+      room -> not Map.has_key?(state.map.rooms, room)
+    end
+  end
+
+  defp meltdown_seconds(state, :reactor),
+    do: round(state.config.reactor_meltdown_ticks * state.config.tick_ms / 1000)
+
+  defp meltdown_seconds(_state, _kind), do: nil
+
+  # `fix` channels the repair: the player joins the fixer set and every
+  # world tick they stay inside the fix room adds progress. It isn't an
+  # instant action — crewmates have to commit to the console.
+  defp exec_fix(server, id) do
+    state = server.state
+
+    cond do
+      state.sabotage == nil ->
+        {{:rejected, :no_sabotage}, server}
+
+      not Rules.can_fix?(state, id) ->
+        reason =
+          case state.players[id] do
+            nil -> :unknown_player
+            %{alive?: false} -> :dead
+            _in_wrong_room -> :not_at_console
+          end
+
+        {{:rejected, reason}, server}
+
+      true ->
+        sabotage = %{state.sabotage | fixers: MapSet.put(state.sabotage.fixers, id)}
+        {:ok, put_in(server.state.sabotage, sabotage)}
+    end
+  end
+
+  defp drop_fixer(%{state: %{sabotage: nil}} = server, _id), do: server
+
+  defp drop_fixer(server, id) do
+    fixers = MapSet.delete(server.state.sabotage.fixers, id)
+    put_in(server.state.sabotage.fixers, fixers)
   end
 
   # Each hearer's own copy of the whisper is buffered per player —
@@ -1319,6 +1459,17 @@ defmodule Aimongus.Game.Server do
       {:game_over, winner} ->
         cast_all(server, {:game_over, winner})
 
+      {:sabotaged, kind, _saboteur, _seconds} ->
+        # The saboteur's identity stays engine-side — everyone hears the
+        # alarm, nobody is told who pulled it
+        cast_all(server, {:sabotage_started, kind})
+
+      {:sabotage_fixed, kind, _fixers} ->
+        cast_all(server, {:sabotage_fixed, kind})
+
+      {:meltdown, kind} ->
+        cast_all(server, {:meltdown, kind})
+
       {:killed, _victim_id, _killer_id, pos} ->
         # A bare "look again" nudge to agents whose vision covers the
         # corpse — decided server-side with the post-kill state. The
@@ -1391,7 +1542,8 @@ defmodule Aimongus.Game.Server do
            visible_players: visible_players(state, player),
            visible_bodies: visible_bodies(state, player),
            whispers: Map.get(server.heard_whispers, player_id, []),
-           meeting: meeting_view(server, player_id)
+           meeting: meeting_view(server, player_id),
+           sabotage: sabotage_view(state)
          }}
     end
   end
@@ -1440,6 +1592,17 @@ defmodule Aimongus.Game.Server do
       nil -> nil
       pos -> GameMap.room_at(state.map, pos)
     end
+  end
+
+  # The alarm is public — every agent is told the kind and where to fix
+  # it. The saboteur's id and the fix countdown stay engine-side.
+  defp sabotage_view(%{sabotage: nil}), do: nil
+
+  defp sabotage_view(state) do
+    %{
+      kind: state.sabotage.kind,
+      fix_room: Rules.fix_room(state.sabotage.kind)
+    }
   end
 
   # Public meeting transcript — every living player hears the whole

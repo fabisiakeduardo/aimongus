@@ -74,6 +74,8 @@ defmodule Aimongus.LLM.Prompt do
     :investigate,
     :protect,
     :whisper,
+    :sabotage,
+    :fix,
     :report,
     :press_button,
     :speak,
@@ -89,6 +91,9 @@ defmodule Aimongus.LLM.Prompt do
     protect: ~s|{"type": "protect", "target": "<player id>"} — shield from one kill|,
     whisper:
       ~s|{"type": "whisper", "text": "...", "target": "<player id>" or null} — heard only within ~3 tiles|,
+    sabotage:
+      ~s|{"type": "sabotage", "target": "lights" or "reactor"} — lights: blind everyone until fixed at Electrical; reactor: crew loses if not fixed at Reactor in 60s|,
+    fix: ~s|{"type": "fix"} — channel the repair; must stand in the sabotage's fix room|,
     report: ~s|{"type": "report"} — report a body you can see; calls a meeting|,
     press_button: ~s|{"type": "press_button"} — only at the Cafeteria button; calls a meeting|,
     speak: ~s|{"type": "speak", "text": "..."} — your public statement this round|,
@@ -230,6 +235,7 @@ defmodule Aimongus.LLM.Prompt do
     [
       "RIGHT NOW — phase #{phase}#{tick}",
       location_line(view),
+      sabotage_line(view),
       visible_players_lines(view),
       visible_bodies_lines(view),
       tasks_lines(view)
@@ -243,6 +249,20 @@ defmodule Aimongus.LLM.Prompt do
     case {view[:room], view[:pos]} do
       {nil, nil} -> nil
       {room, pos} -> "You are at #{place(room)}#{pos_str(pos)}."
+    end
+  end
+
+  defp sabotage_line(view) do
+    case view[:sabotage] do
+      %{kind: :lights, fix_room: room} ->
+        "SABOTAGE — the lights are out: your vision is nearly zero. Fix it at #{room}."
+
+      %{kind: :reactor, fix_room: room} ->
+        "SABOTAGE — REACTOR MELTDOWN: if nobody fixes it at #{room} in time, the crew loses. " <>
+          "Go there and send \"fix\"."
+
+      _other ->
+        nil
     end
   end
 
@@ -492,7 +512,8 @@ defmodule Aimongus.LLM.Prompt do
 
       :free_roam ->
         ~w(move_to do_task) ++
-          role_intents(view) ++ ~w(whisper report press_button nothing)
+          role_intents(view) ++
+          sabotage_intents(view) ++ ~w(whisper report press_button nothing)
 
       :meeting when ghost? ->
         ~w(nothing)
@@ -519,6 +540,17 @@ defmodule Aimongus.LLM.Prompt do
       :sheriff -> ~w(investigate)
       :medic -> ~w(protect)
       _other -> []
+    end
+  end
+
+  # `sabotage` is offered to killers while none is active; `fix` is
+  # offered to everyone living while one is. (The engine still validates
+  # cooldown/position — the prompt only advertises what's sensible.)
+  defp sabotage_intents(view) do
+    cond do
+      view[:sabotage] != nil -> ~w(fix)
+      Map.get(view, :role) in [:impostor, :serial_killer] -> ~w(sabotage)
+      true -> []
     end
   end
 

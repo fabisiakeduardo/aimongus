@@ -60,6 +60,33 @@ defmodule Aimongus.Game.Rules do
 
   @kill_roles [:impostor, :serial_killer]
 
+  # Sabotage kinds and where they're fixed. `:lights` blinds the living
+  # until repaired at Electrical; `:reactor` is a countdown the crew
+  # loses at Reactor. Only kill roles sabotage — the vigilante can't.
+  @sabotage_kinds [:lights, :reactor]
+  @fix_rooms %{lights: "Electrical", reactor: "Reactor"}
+
+  @doc "The sabotage kinds the game supports."
+  @spec sabotage_kinds() :: [atom()]
+  def sabotage_kinds, do: @sabotage_kinds
+
+  @doc "The room whose console clears `kind`, or `nil`."
+  @spec fix_room(atom()) :: String.t() | nil
+  def fix_room(kind), do: Map.get(@fix_rooms, kind)
+
+  @doc "Whether `:lights` is currently sabotaged."
+  @spec lights_out?(State.t()) :: boolean()
+  def lights_out?(%State{sabotage: %{kind: :lights}}), do: true
+  def lights_out?(%State{}), do: false
+
+  @doc "Effective vision radius for living viewers right now."
+  @spec vision_radius(State.t()) :: float()
+  def vision_radius(%State{} = state) do
+    if lights_out?(state),
+      do: state.config.sabotage_vision_radius,
+      else: state.config.vision_radius
+  end
+
   @doc "Euclidean distance between two `{x, y}` tile positions, in tiles."
   @spec distance(GameMap.pos(), GameMap.pos()) :: float()
   def distance({x1, y1}, {x2, y2}) do
@@ -83,7 +110,7 @@ defmodule Aimongus.Game.Rules do
         true
 
       %Player{pos: pos} ->
-        distance(pos, target_pos) <= state.config.vision_radius and
+        distance(pos, target_pos) <= vision_radius(state) and
           los?(state.map, pos, target_pos)
     end
   end
@@ -130,6 +157,44 @@ defmodule Aimongus.Game.Rules do
 
       _no_speaker ->
         []
+    end
+  end
+
+  @doc """
+  Whether `player_id` may trigger `kind` right now: a living kill role
+  (impostor or serial killer — the vigilante cannot sabotage), off
+  sabotage cooldown (`ability_ready_at`), valid kind, and no sabotage
+  already active.
+  """
+  @spec can_sabotage?(State.t(), Player.id(), atom()) :: boolean()
+  def can_sabotage?(%State{} = state, player_id, kind) do
+    case State.player(state, player_id) do
+      %Player{alive?: true} = player ->
+        kind in @sabotage_kinds and
+          player.role in @kill_roles and
+          state.tick >= player.ability_ready_at and
+          state.sabotage == nil
+
+      _other ->
+        false
+    end
+  end
+
+  @doc """
+  Whether `player_id` can channel a fix right now: alive, a sabotage is
+  active, and the player stands inside that sabotage's fix room. Ghosts
+  cannot fix — Among Us rule.
+  """
+  @spec can_fix?(State.t(), Player.id()) :: boolean()
+  def can_fix?(%State{sabotage: nil}, _id), do: false
+
+  def can_fix?(%State{} = state, player_id) do
+    case State.player(state, player_id) do
+      %Player{alive?: true, pos: pos} ->
+        GameMap.room_at(state.map, pos) == fix_room(state.sabotage.kind)
+
+      _other ->
+        false
     end
   end
 

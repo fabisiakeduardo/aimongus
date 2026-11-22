@@ -51,6 +51,14 @@ defmodule Aimongus.Game.State do
       (default `300`, ~30s at 10 Hz)
     * `:protect_cooldown_ticks` — ticks between protections
       (default `300`, ~30s at 10 Hz)
+    * `:sabotage_cooldown_ticks` — ticks between a killer's sabotages,
+      per saboteur (default `600`, ~60s at 10 Hz)
+    * `:sabotage_vision_radius` — effective vision while `:lights` is
+      active (default `2.0`)
+    * `:sabotage_fix_ticks` — fixer-ticks to clear a sabotage; multiple
+      fixers channel in parallel (default `40`, ~4s solo)
+    * `:reactor_meltdown_ticks` — countdown on `:reactor` before the
+      impostors win outright (default `600`, ~60s at 10 Hz)
 
   ## Tasks and the win pool
 
@@ -148,7 +156,11 @@ defmodule Aimongus.Game.State do
     investigate_cooldown_ticks: 300,
     protect_range: 3.0,
     protect_duration_ticks: 300,
-    protect_cooldown_ticks: 300
+    protect_cooldown_ticks: 300,
+    sabotage_cooldown_ticks: 600,
+    sabotage_vision_radius: 2.0,
+    sabotage_fix_ticks: 40,
+    reactor_meltdown_ticks: 600
   }
 
   defstruct phase: :lobby,
@@ -158,7 +170,8 @@ defmodule Aimongus.Game.State do
             tick: 0,
             config: %{},
             map: nil,
-            winner: nil
+            winner: nil,
+            sabotage: nil
 
   @type phase ::
           :lobby | :free_roam | :meeting | :voting | :eject | :game_over
@@ -181,7 +194,23 @@ defmodule Aimongus.Game.State do
           tick: non_neg_integer(),
           config: map(),
           map: GameMap.t(),
-          winner: nil | :crew | :impostors | {:solo, Player.id()}
+          winner: nil | :crew | :impostors | {:solo, Player.id()},
+          sabotage: nil | sabotage()
+        }
+
+  @typedoc """
+  An active sabotage. `:lights` persists until fixed (vision shrinks to
+  `sabotage_vision_radius`); `:reactor` self-destructs at `ends_at_tick`
+  unless the crew fixes it first. `fixers` are players channeling the
+  repair; `progress` accrues one tick per standing fixer per world tick.
+  """
+  @type sabotage :: %{
+          kind: :lights | :reactor,
+          by: Player.id(),
+          started_tick: non_neg_integer(),
+          ends_at_tick: non_neg_integer() | nil,
+          fixers: MapSet.t(Player.id()),
+          progress: non_neg_integer()
         }
 
   @doc "Every role the game knows about."
