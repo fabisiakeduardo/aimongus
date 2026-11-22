@@ -21,6 +21,12 @@ defmodule Aimongus.Game.State do
     * `:roles` — role list for the match (default: the 9-player mix:
       2 impostors, 1 sheriff, 1 medic, 1 jester, 4 crewmates)
     * `:reveal_role_on_eject` — used by the meeting phase (default `true`)
+    * `:tick_ms` — real milliseconds per world tick (default `100`, ~10 Hz)
+    * `:move_speed` — tiles a pawn advances per world tick (default `1`)
+    * `:task_ticks` — ticks standing on a task spot to finish it
+      (default `50`, ~5s at 10 Hz)
+    * `:button_range` — Euclidean tiles from the `B` spot allowed to press
+      the emergency button (default `1.5`, i.e. on or adjacent)
 
   ## Tasks and the win pool
 
@@ -98,7 +104,11 @@ defmodule Aimongus.Game.State do
     whisper_radius: 3.0,
     tasks_per_player: 3,
     roles: @default_roles,
-    reveal_role_on_eject: true
+    reveal_role_on_eject: true,
+    tick_ms: 100,
+    move_speed: 1,
+    task_ticks: 50,
+    button_range: 1.5
   }
 
   defstruct phase: :lobby,

@@ -172,7 +172,14 @@ defmodule Aimongus.Game.Rules do
     map_size(tasks) > 0 and Enum.all?(tasks, fn {_id, done?} -> done? end)
   end
 
-  defp kill_capable?(%Player{role: role, vigilante_shot_used?: shot_used?}) do
+  @doc """
+  Whether `player`'s role can kill at all — `:impostor`/`:serial_killer`
+  always, `:vigilante` while its single shot is unspent. Range, cooldown
+  and liveness are checked separately by `can_kill?/3`; the engine uses
+  this to give precise intent-rejection reasons.
+  """
+  @spec kill_capable?(Player.t()) :: boolean()
+  def kill_capable?(%Player{role: role, vigilante_shot_used?: shot_used?}) do
     role in @kill_roles or (role == :vigilante and not shot_used?)
   end
 

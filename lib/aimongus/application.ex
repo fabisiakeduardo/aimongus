@@ -11,6 +11,8 @@ defmodule Aimongus.Application do
       AimongusWeb.Telemetry,
       {DNSCluster, query: Application.get_env(:aimongus, :dns_cluster_query) || :ignore},
       {Phoenix.PubSub, name: Aimongus.PubSub},
+      # One GameServer per running match, looked up by match id.
+      {Registry, keys: :unique, name: Aimongus.MatchRegistry},
       # Start a worker by calling: Aimongus.Worker.start_link(arg)
       # {Aimongus.Worker, arg},
       # Start to serve requests, typically the last entry
