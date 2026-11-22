@@ -10,6 +10,12 @@ import Config
 config :aimongus,
   generators: [timestamp_type: :utc_datetime]
 
+# Per-agent LLM adapter selection: agent id => module, :default as
+# fallback. DevinCLI shells out to `devin -p` (Devin quota, not API
+# keys); test env overrides with the scripted Stub and prod should
+# point at OpenRouter.
+config :aimongus, :llm_adapters, %{default: Aimongus.LLM.DevinCLI}
+
 # Configure the endpoint
 config :aimongus, AimongusWeb.Endpoint,
   url: [host: "localhost"],

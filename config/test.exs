@@ -7,6 +7,11 @@ config :aimongus, AimongusWeb.Endpoint,
   secret_key_base: "TtMyj3nvweg8hbGM0tx91xBO22pJhZNHmIIQOyRdgTnr1C/0WRdoecyMqMH7P2br",
   server: false
 
+# Tests route every agent through the scripted stub — no real CLI or
+# HTTP calls. "p1" maps to a different adapter purely to exercise
+# per-agent selection in tests; it is resolved, never called.
+config :aimongus, :llm_adapters, %{"p1" => Aimongus.LLM.DevinCLI, default: Aimongus.LLM.Stub}
+
 # Print only warnings and errors during test
 config :logger, level: :warning
 
