@@ -29,7 +29,10 @@ defmodule Aimongus.Match.Manager do
   `DevinCLI`/`Stub` are $0 (dev/test spend nothing). When `spent >=
   budget` the manager starts no new live match — a *running* match is
   never cut off; exhaustion applies to the next decide. Spend resets
-  automatically on the first decision of a new UTC day.
+  automatically on the first decision of a new UTC day. **Limitation:**
+  `spent` is in-memory — a manager crash or node restart reverts the
+  day's tally to $0, so the budget is a circuit breaker against runaway
+  cost, not accounting.
 
   ## Replay fallback
 
@@ -138,7 +141,7 @@ defmodule Aimongus.Match.Manager do
   control. `{:reply, :ok}` once the new thing is running.
   """
   @spec new_match(GenServer.server()) :: :ok
-  def new_match(server \\ __MODULE__), do: GenServer.call(server, :new_match)
+  def new_match(server \\ __MODULE__), do: GenServer.call(server, :new_match, :infinity)
 
   @doc """
   A snapshot for admin/observability: `%{mode, match_id, spent, budget,
@@ -232,7 +235,7 @@ defmodule Aimongus.Match.Manager do
     # its mailbox already holds :game_over (PubSub dispatch completed
     # before this handle_info ran) and nothing else will arrive.
     state = state |> stop_agents() |> stop_recorder()
-    ref = Process.send_after(self(), :next_match, state.inter_match_ms)
+    ref = schedule_restart(state)
     {:noreply, %{state | mode: :waiting, restart_ref: ref}}
   end
 
@@ -240,16 +243,23 @@ defmodule Aimongus.Match.Manager do
   # stale message) — ignore
   def handle_info({:game_over, _winner}, state), do: {:noreply, state}
 
-  def handle_info(:next_match, state) do
-    {:noreply, decide(%{state | restart_ref: nil})}
+  # timers carry their ref: cancel_timer can't retract a message already
+  # delivered, so a stale :next_match must not force an unscheduled
+  # teardown+restart after new_match pivoted
+  def handle_info({:next_match, ref}, state) do
+    if ref == state.restart_ref do
+      {:noreply, decide(%{state | restart_ref: nil})}
+    else
+      {:noreply, state}
+    end
   end
 
-  def handle_info(:retry, state) do
-    {:noreply, decide(%{state | idle_ref: nil})}
-  end
-
-  def handle_info(:replay_finished, state) do
-    {:noreply, decide(%{state | replay_pid: nil})}
+  def handle_info({:retry, ref}, state) do
+    if ref == state.idle_ref do
+      {:noreply, decide(%{state | idle_ref: nil})}
+    else
+      {:noreply, state}
+    end
   end
 
   # the GameServer died without broadcasting :game_over — treat it as a
@@ -263,7 +273,7 @@ defmodule Aimongus.Match.Manager do
 
     case state.mode do
       :live ->
-        ref = Process.send_after(self(), :next_match, state.inter_match_ms)
+        ref = schedule_restart(state)
         {:noreply, %{state | mode: :waiting, restart_ref: ref}}
 
       _other ->
@@ -281,12 +291,15 @@ defmodule Aimongus.Match.Manager do
         {:noreply, %{state | recorder_pid: nil}}
 
       pid == state.replay_pid ->
-        # abnormal replay crash → fall through to a fresh decision
-        if reason == :normal do
-          {:noreply, %{state | replay_pid: nil}}
-        else
-          {:noreply, decide(%{state | replay_pid: nil})}
+        # the player is linked — its exit IS the completion signal,
+        # already tagged by pid (stale :replay_finished-style races are
+        # impossible: this clause only fires for the *current* pid).
+        # Normal end or crash both warrant a fresh decision.
+        unless reason == :normal do
+          Logger.warning("replay #{inspect(pid)} crashed: #{inspect(reason)}")
         end
+
+        {:noreply, decide(%{state | replay_pid: nil})}
 
       true ->
         {:noreply, state}
@@ -392,11 +405,10 @@ defmodule Aimongus.Match.Manager do
     case pick_replay(state) do
       nil ->
         Logger.warning("no replay available — idling #{state.idle_retry_ms}ms")
-        ref = Process.send_after(self(), :retry, state.idle_retry_ms)
-        %{state | mode: :idle, idle_ref: ref, replay_pid: nil}
+        %{state | mode: :idle, idle_ref: schedule_idle(state), replay_pid: nil}
 
       path ->
-        opts = [speed: state.replay_speed, notify: self(), topic: topic(state)]
+        opts = [speed: state.replay_speed, topic: topic(state)]
 
         case safe_start(fn -> Replay.play(path, opts) end) do
           {:ok, pid} ->
@@ -405,8 +417,7 @@ defmodule Aimongus.Match.Manager do
 
           {:error, reason} ->
             Logger.error("replay #{path} failed: #{inspect(reason)}")
-            ref = Process.send_after(self(), :retry, state.idle_retry_ms)
-            %{state | mode: :idle, idle_ref: ref}
+            %{state | mode: :idle, idle_ref: schedule_idle(state)}
         end
     end
   end
@@ -511,13 +522,24 @@ defmodule Aimongus.Match.Manager do
     %{state | replay_pid: nil}
   end
 
-  defp cancel_timers(state) do
-    for ref <- [state.restart_ref, state.idle_ref], ref != nil do
-      Process.cancel_timer(ref)
-    end
-
-    %{state | restart_ref: nil, idle_ref: nil}
+  # ref-tagged self-messages: a delivered-but-stale timer (cancel_timer
+  # can't retract it) is dropped by the ref check in handle_info
+  defp schedule_restart(state) do
+    ref = make_ref()
+    Process.send_after(self(), {:next_match, ref}, state.inter_match_ms)
+    ref
   end
+
+  defp schedule_idle(state) do
+    ref = make_ref()
+    Process.send_after(self(), {:retry, ref}, state.idle_retry_ms)
+    ref
+  end
+
+  # invalidating the stored refs is what cancels the timers — the
+  # messages may still fire, but their tag no longer matches and
+  # handle_info drops them
+  defp cancel_timers(state), do: %{state | restart_ref: nil, idle_ref: nil}
 
   # Linked processes: a failed start can exit us — guard, and a stopped
   # child may already be gone — also fine.

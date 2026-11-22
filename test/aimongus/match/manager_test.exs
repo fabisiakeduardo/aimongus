@@ -35,10 +35,17 @@ defmodule Aimongus.Match.ManagerTest do
 
   # A manager driven by tiny deterministic matches: no agent processes,
   # no recorder, the stall cap ending each match on its first 10ms tick.
+  # Each gets a unique via-tuple name — registering the default
+  # `Aimongus.Match.Manager` atom would collide across async tests
+  # (tests hold the pid anyway; only the admin endpoint needs the
+  # global name).
   defp start_manager(opts) do
     opts =
       [
         match_id: unique_id(),
+        name:
+          {:via, Registry,
+           {Aimongus.MatchRegistry, {:manager, System.unique_integer([:positive])}}},
         players: players(),
         agents: false,
         record: false,
