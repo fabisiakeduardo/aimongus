@@ -219,6 +219,19 @@ defmodule Aimongus.Game.ServerTest do
       assert_receive {:task_progress, "p2", "T1", 20}
     end
 
+    test "resubmitting do_task while channeling keeps the progress" do
+      id = start_running(%{task_ticks: 5})
+
+      :ok = Server.submit_intent(id, "p2", {:do_task, "T1"})
+      step_until(id, fn st -> st.players["p2"].pos == {2, 2} end)
+      assert_receive {:task_progress, "p2", "T1", 20}
+
+      # agents re-issue their intent every poll — this must not rewind
+      :ok = Server.submit_intent(id, "p2", {:do_task, "T1"})
+      Server.step(id)
+      assert_receive {:task_progress, "p2", "T1", 40}
+    end
+
     test "completing the whole task pool wins the game for crew" do
       id = start_running(%{task_ticks: 2})
 

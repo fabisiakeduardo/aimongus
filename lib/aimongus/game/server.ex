@@ -715,6 +715,12 @@ defmodule Aimongus.Game.Server do
       player.tasks[task_id] ->
         {{:rejected, :task_done}, server}
 
+      # Re-submitting the same task while already channeling must not
+      # reset the work counter — LLM agents re-issue intents on every
+      # poll, which would starve the channel forever.
+      match?({:task, ^task_id, _done}, server.actions[id]) ->
+        {:ok, server}
+
       true ->
         spot = GameMap.task_spot(state.map, task_id)
 
