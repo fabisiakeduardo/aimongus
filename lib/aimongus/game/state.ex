@@ -27,6 +27,13 @@ defmodule Aimongus.Game.State do
       (default `50`, ~5s at 10 Hz)
     * `:button_range` — Euclidean tiles from the `B` spot allowed to press
       the emergency button (default `1.5`, i.e. on or adjacent)
+    * `:meeting_seconds` — wall-clock cap on the whole `:meeting`
+      (discussion) phase; on expiry unspoken slots are skipped and voting
+      begins (default `90`)
+    * `:speech_rounds` — discussion rounds; each round every living
+      player gets one speak slot in sorted-id order (default `2`)
+    * `:vote_seconds` — wall-clock voting deadline; players who haven't
+      voted when it expires count as `:skip` (default `30`)
 
   ## Tasks and the win pool
 
@@ -108,7 +115,10 @@ defmodule Aimongus.Game.State do
     tick_ms: 100,
     move_speed: 1,
     task_ticks: 50,
-    button_range: 1.5
+    button_range: 1.5,
+    meeting_seconds: 90,
+    speech_rounds: 2,
+    vote_seconds: 30
   }
 
   defstruct phase: :lobby,

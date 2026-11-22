@@ -300,9 +300,12 @@ defmodule Aimongus.Game.ServerTest do
       state = Server.state(id)
       assert state.phase == :meeting
       assert [%{reported?: true} | _] = state.bodies
-      # world frozen: everyone stopped, intents rejected
+      # world frozen: everyone stopped, free-roam intents rejected —
+      # :nothing is now a meeting intent (pass), and p3 doesn't hold
+      # the floor (p1 does), so the precise rejection is :not_your_turn
       assert Enum.all?(state.players, fn {_id, p} -> p.path == [] end)
-      assert {:rejected, :wrong_phase} = Server.submit_intent(id, "p3", :nothing)
+      assert {:rejected, :not_your_turn} = Server.submit_intent(id, "p3", :nothing)
+      assert {:rejected, :wrong_phase} = Server.submit_intent(id, "p3", {:move_to, {1, 1}})
     end
 
     test "report requires a visible unreported body" do

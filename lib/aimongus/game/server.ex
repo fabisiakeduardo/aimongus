@@ -45,7 +45,7 @@ defmodule Aimongus.Game.Server do
        the task spot accrues one work tick → `{:task_progress, ...}` /
        `{:task_done, ...}` at `config.task_ticks`
 
-  ## Intents (free-roam only)
+  ## Intents — free roam
 
     * `{:move_to, {x, y} | "Room Name"}` — A* path to the cell; for a room
       name, to the reachable room cell with the shortest route among the
@@ -66,13 +66,44 @@ defmodule Aimongus.Game.Server do
       selects an addressee, never extends the audience.
     * `:nothing` — idles; clears path and task progress.
 
-  A meeting freezes the world: paths are dropped, actions discarded and
-  the phase becomes `:meeting` (Task 5 owns everything after that).
+  `{:speak, text}` and `{:vote, choice}` submitted in `:free_roam` are
+  real intents in the wrong phase — `{:rejected, :wrong_phase}`.
+
+  ## Meetings
+
+  `report`/`press_button` freezes the world (paths dropped, actions
+  discarded, `state.tick` stops advancing) and opens `:meeting`. From
+  there the phase machine runs:
+
+    1. **`:meeting` (discussion)** — `config.speech_rounds` rounds; each
+       round every living player gets one speak slot in sorted-id order.
+       The server broadcasts `{:speak_request, id}` per slot — the prompt
+       Task 12's agent runtime answers with a `{:speak, text}` intent
+       (`:nothing` passes the slot silently, broadcast as
+       `{:spoke, id, nil}`). Only the floor holder's speak is accepted
+       (`{:rejected, :not_your_turn}` otherwise). `meeting_seconds` caps
+       the whole discussion: on expiry, unspoken slots are skipped.
+    2. **`:voting`** — living players submit `{:vote, player_id | :skip}`
+       (or `:nothing` to abstain). Re-voting is legal; the latest ballot
+       counts. `vote_seconds` is the deadline — votes never cast count
+       as `:skip`. Tallying is plurality: the unique top candidate is
+       ejected; a tie or a `:skip` plurality ejects nobody.
+    3. **`:eject`** — transient phase holding until the next tick/step so
+       `{:ejected, id, role}` / `:no_ejection` is observable. Resolving
+       clears `state.bodies` (Among Us corpse cleanup), preserves
+       positions and kill cooldowns, re-evaluates `Rules.winner/1`, then
+       lands in `:free_roam` (`:meeting_ended`) or `:game_over`.
+
+  Deadlines are wall-clock (monotonic ms) checked from `maybe_advance` —
+  the recurring `:tick` timer keeps firing through meetings, and
+  `step/1` drives them deterministically in tests. `server.meeting`
+  holds the run bookkeeping (speaker queue, speech `history`, `votes`,
+  deadline) — Task 12 reads `history` to prompt each speaker.
 
   ## Rejections
 
-  Intents submitted outside `:free_roam` are rejected — not queued —
-  with `{:rejected, :wrong_phase}` (meetings re-prompt agents anyway, so
+  Intents submitted in the wrong phase are rejected — not queued — with
+  `{:rejected, :wrong_phase}` (meetings re-prompt agents anyway, so
   queuing would replay stale decisions). Other reasons:
 
     * `:unknown_player`, `:unknown_intent`
@@ -81,7 +112,8 @@ defmodule Aimongus.Game.Server do
     * `:dead`, `:unknown_target`, `:target_dead`, `:cannot_kill`,
       `{:cooldown, ticks_left}`, `:out_of_range` (kill)
     * `:no_body` (report), `:no_button`, `:not_at_button` (press_button)
-    * `:invalid_text` (whisper)
+    * `:invalid_text` (whisper, speak)
+    * `:not_your_turn` (speak), `:unknown_target`, `:target_dead` (vote)
 
   ## Ghosts
 
@@ -89,6 +121,8 @@ defmodule Aimongus.Game.Server do
   `:nothing` still work (that's why `state.tasks` keeps dead players'
   assignments in the pool). `kill`, `report`, `press_button` and
   `whisper` return `{:rejected, :dead}` — ghosts don't touch the living.
+  Ghosts are also silent in meetings: `speak` and `vote` return
+  `{:rejected, :dead}`.
 
   ## Events
 
@@ -103,13 +137,20 @@ defmodule Aimongus.Game.Server do
     * `{:killed, victim_id, killer_id, pos}`
     * `{:body_reported, reporter_id, pos}`, `{:button_pressed, id}`,
       `:meeting_called`
+    * `{:meeting_started, {:report, id} | {:button, id}}`
+    * `{:speak_request, id}` — that player's speak slot opened
+    * `{:spoke, id, text | nil}` — `nil` when the speaker passed
+    * `:voting_started`, `{:voted, id, choice}`
+    * `{:ejected, id, role | nil}` (role is `nil` when
+      `config.reveal_role_on_eject` is false), `:no_ejection`
+    * `:meeting_ended` — the world is live again in `:free_roam`
     * `{:whisper, from_id, audience_ids, text}`
     * `{:game_over, winner}` where `winner` is `Rules.winner/1`'s shape
 
   `Rules.winner/1` is only evaluated once the match is in `:free_roam`
   (it's phase-blind): at `start_match` (degenerate role mixes end
-  immediately, which is correct Among Us semantics) and after every kill
-  and task completion.
+  immediately, which is correct Among Us semantics), after every kill
+  and task completion, and when an ejection resolves.
   """
 
   use GenServer
@@ -120,10 +161,12 @@ defmodule Aimongus.Game.Server do
   @registry Aimongus.MatchRegistry
   @room_candidates 8
   @max_whisper_bytes 500
+  @max_speech_bytes 1_000
 
   defstruct match_id: nil,
             state: nil,
             actions: %{},
+            meeting: nil,
             tick_ms: 100,
             auto_tick?: true,
             shuffle_roles?: true
@@ -282,6 +325,9 @@ defmodule Aimongus.Game.Server do
   end
 
   defp maybe_advance(%{state: %{phase: :free_roam}} = server), do: advance_tick(server)
+  defp maybe_advance(%{state: %{phase: :meeting}} = server), do: advance_meeting(server)
+  defp maybe_advance(%{state: %{phase: :voting}} = server), do: advance_voting(server)
+  defp maybe_advance(%{state: %{phase: :eject}} = server), do: resolve_eject(server)
   defp maybe_advance(server), do: server
 
   ## Tick
@@ -353,10 +399,22 @@ defmodule Aimongus.Game.Server do
   ## Intent execution
 
   defp execute_intent(server, player_id, intent) do
-    cond do
-      server.state.phase != :free_roam -> {{:rejected, :wrong_phase}, server}
-      not Map.has_key?(server.state.players, player_id) -> {{:rejected, :unknown_player}, server}
-      true -> dispatch_intent(server, player_id, intent)
+    case server.state.phase do
+      :free_roam ->
+        if Map.has_key?(server.state.players, player_id) do
+          dispatch_intent(server, player_id, intent)
+        else
+          {{:rejected, :unknown_player}, server}
+        end
+
+      :meeting ->
+        meeting_intent(server, player_id, intent)
+
+      :voting ->
+        voting_intent(server, player_id, intent)
+
+      _other ->
+        {{:rejected, :wrong_phase}, server}
     end
   end
 
@@ -369,6 +427,10 @@ defmodule Aimongus.Game.Server do
 
   defp dispatch_intent(server, id, {:whisper, text, _target}),
     do: exec_whisper(server, id, text)
+
+  # speak/vote are real intents — just wrong phase while roaming
+  defp dispatch_intent(server, _id, {:speak, _}), do: {{:rejected, :wrong_phase}, server}
+  defp dispatch_intent(server, _id, {:vote, _}), do: {{:rejected, :wrong_phase}, server}
 
   defp dispatch_intent(server, id, :nothing) do
     {:ok, stop_player(server, id)}
@@ -522,7 +584,7 @@ defmodule Aimongus.Game.Server do
           bodies = List.update_at(state.bodies, idx, &Map.put(&1, :reported?, true))
           server = %{server | state: %{state | bodies: bodies}}
           broadcast(server, {:body_reported, id, body.pos})
-          {:ok, call_meeting(server)}
+          {:ok, call_meeting(server, {:report, id})}
       end
     else
       {{:rejected, :dead}, server}
@@ -545,7 +607,7 @@ defmodule Aimongus.Game.Server do
 
       true ->
         broadcast(server, {:button_pressed, id})
-        {:ok, call_meeting(server)}
+        {:ok, call_meeting(server, {:button, id})}
     end
   end
 
@@ -556,7 +618,7 @@ defmodule Aimongus.Game.Server do
       not player.alive? ->
         {{:rejected, :dead}, server}
 
-      not is_binary(text) or text == "" or byte_size(text) > @max_whisper_bytes ->
+      invalid_text?(text, @max_whisper_bytes) ->
         {{:rejected, :invalid_text}, server}
 
       true ->
@@ -566,17 +628,246 @@ defmodule Aimongus.Game.Server do
     end
   end
 
-  ## Meetings & game over
+  ## Meetings
 
-  # Freezes the world exactly where it stands (Task 5 takes it from here).
-  defp call_meeting(server) do
+  # Meeting bookkeeping lives in `server.meeting` (process state, not the
+  # authoritative %State{}): the speech history agents get prompted with
+  # (Task 12), the speaker queue, collected votes and the current phase's
+  # wall-clock deadline.
+  #
+  #   %{reason: {:report, id} | {:button, id},
+  #     round: current speech round (1..speech_rounds),
+  #     current: player id holding the floor,
+  #     queue: remaining speaker ids this round,
+  #     history: [{speaker_id, text | nil}] in speak order,
+  #     votes: %{voter_id => choice},
+  #     deadline: monotonic ms the current phase expires at (nil = none)}
+
+  # Freezes the world exactly where it stands and opens the discussion:
+  # `speech_rounds` rounds in which every living player gets one speak
+  # slot, in sorted-id order. `{:speak_request, id}` on the match topic is
+  # the prompt Task 12's agent runtime turns into a `speak` intent.
+  defp call_meeting(server, reason) do
     players =
       Map.new(server.state.players, fn {id, player} -> {id, %{player | path: []}} end)
 
-    server = %{server | state: %{server.state | players: players, phase: :meeting}, actions: %{}}
+    [current | queue] = alive_ids(server.state)
+
+    meeting = %{
+      reason: reason,
+      round: 1,
+      current: current,
+      queue: queue,
+      history: [],
+      votes: %{},
+      deadline: deadline_in(server.state.config.meeting_seconds)
+    }
+
+    server = %{
+      server
+      | state: %{server.state | players: players, phase: :meeting},
+        actions: %{},
+        meeting: meeting
+    }
+
     broadcast(server, :meeting_called)
+    broadcast(server, {:meeting_started, reason})
+    broadcast(server, {:speak_request, current})
     server
   end
+
+  defp meeting_intent(server, id, {:speak, text}), do: exec_speak(server, id, text)
+
+  # :nothing passes the floor — a speak slot with no statement
+  defp meeting_intent(server, id, :nothing), do: exec_speak(server, id, nil)
+
+  defp meeting_intent(server, _id, _intent), do: {{:rejected, :wrong_phase}, server}
+
+  defp exec_speak(server, id, text) do
+    player = server.state.players[id]
+
+    cond do
+      player == nil ->
+        {{:rejected, :unknown_player}, server}
+
+      not player.alive? ->
+        # ghosts are silent in meetings
+        {{:rejected, :dead}, server}
+
+      server.meeting.current != id ->
+        {{:rejected, :not_your_turn}, server}
+
+      text != nil and invalid_text?(text, @max_speech_bytes) ->
+        {{:rejected, :invalid_text}, server}
+
+      true ->
+        {:ok, advance_speaker(server, id, text)}
+    end
+  end
+
+  defp advance_speaker(server, id, text) do
+    meeting = server.meeting
+    broadcast(server, {:spoke, id, text})
+    meeting = %{meeting | history: meeting.history ++ [{id, text}]}
+
+    case meeting.queue do
+      [next | rest] ->
+        server = %{server | meeting: %{meeting | current: next, queue: rest}}
+        broadcast(server, {:speak_request, next})
+        server
+
+      [] ->
+        if meeting.round < server.state.config.speech_rounds do
+          [next | rest] = alive_ids(server.state)
+
+          server = %{
+            server
+            | meeting: %{meeting | round: meeting.round + 1, current: next, queue: rest}
+          }
+
+          broadcast(server, {:speak_request, next})
+          server
+        else
+          start_voting(%{server | meeting: meeting})
+        end
+    end
+  end
+
+  # The meeting deadline is a wall-clock cap on the *whole* discussion: a
+  # hung speaker stalls their slot until it expires, then remaining slots
+  # are skipped. Checked from `maybe_advance` — the recurring :tick keeps
+  # firing through meetings and `step/1` drives it in tests.
+  defp advance_meeting(server) do
+    if deadline_passed?(server.meeting.deadline), do: start_voting(server), else: server
+  end
+
+  defp start_voting(server) do
+    meeting = %{
+      server.meeting
+      | current: nil,
+        queue: [],
+        deadline: deadline_in(server.state.config.vote_seconds)
+    }
+
+    server = %{server | state: %{server.state | phase: :voting}, meeting: meeting}
+    broadcast(server, :voting_started)
+    server
+  end
+
+  defp voting_intent(server, id, {:vote, choice}), do: exec_vote(server, id, choice)
+
+  # :nothing abstains — equivalent to voting :skip
+  defp voting_intent(server, id, :nothing), do: exec_vote(server, id, :skip)
+
+  defp voting_intent(server, _id, _intent), do: {{:rejected, :wrong_phase}, server}
+
+  defp exec_vote(server, id, choice) do
+    player = server.state.players[id]
+    target = server.state.players[choice]
+
+    cond do
+      player == nil ->
+        {{:rejected, :unknown_player}, server}
+
+      not player.alive? ->
+        {{:rejected, :dead}, server}
+
+      choice != :skip and target == nil ->
+        {{:rejected, :unknown_target}, server}
+
+      choice != :skip and not target.alive? ->
+        {{:rejected, :target_dead}, server}
+
+      true ->
+        # re-voting is legal: the latest ballot is what counts
+        meeting = %{server.meeting | votes: Map.put(server.meeting.votes, id, choice)}
+        server = %{server | meeting: meeting}
+        broadcast(server, {:voted, id, choice})
+
+        if all_voted?(server), do: {:ok, tally(server)}, else: {:ok, server}
+    end
+  end
+
+  defp all_voted?(server) do
+    voted = Map.keys(server.meeting.votes)
+    server.state |> alive_ids() |> Enum.all?(&(&1 in voted))
+  end
+
+  defp advance_voting(server) do
+    if deadline_passed?(server.meeting.deadline), do: tally(server), else: server
+  end
+
+  # Plurality ejects: the unique top candidate is ejected unless it is
+  # :skip or the top is tied — both mean nobody goes out the airlock.
+  # Players who never voted count as :skip.
+  defp tally(server) do
+    votes =
+      server.state
+      |> alive_ids()
+      |> Map.new(fn id -> {id, Map.get(server.meeting.votes, id, :skip)} end)
+
+    counts =
+      Enum.reduce(votes, %{}, fn {_voter, choice}, acc ->
+        Map.update(acc, choice, 1, &(&1 + 1))
+      end)
+
+    top = counts |> Map.values() |> Enum.max()
+    leaders = for {choice, n} <- counts, n == top, do: choice
+
+    server = %{server | state: %{server.state | phase: :eject}}
+
+    case leaders do
+      [choice] when choice != :skip ->
+        role = server.state.players[choice].role
+        server = put_in(server.state.players[choice].alive?, false)
+        # TODO(Task 6): ejecting the jester is a solo win — game_over
+        # {:solo, id} — for now it is a normal eject.
+        role = if server.state.config.reveal_role_on_eject, do: role, else: nil
+        broadcast(server, {:ejected, choice, role})
+        server
+
+      _tied_or_skip ->
+        broadcast(server, :no_ejection)
+        server
+    end
+  end
+
+  # :eject is a real but transient phase — it holds until the next
+  # :tick/step so the ejection event is observable before play resumes.
+  # Resolving ends the meeting: corpses are cleaned up (Among Us rule),
+  # positions and kill cooldowns are preserved (the world clock was
+  # frozen), and the winner is re-evaluated.
+  defp resolve_eject(server) do
+    state = %{server.state | bodies: []}
+    server = %{server | state: state, meeting: nil}
+
+    case Rules.winner(state) do
+      nil ->
+        server = %{server | state: %{state | phase: :free_roam}}
+        broadcast(server, :meeting_ended)
+        server
+
+      winner ->
+        server = %{server | state: %{state | phase: :game_over, winner: winner}}
+        broadcast(server, {:game_over, winner})
+        server
+    end
+  end
+
+  defp alive_ids(state) do
+    state |> State.alive_players() |> Enum.map(& &1.id) |> Enum.sort()
+  end
+
+  defp deadline_in(seconds), do: System.monotonic_time(:millisecond) + round(seconds * 1000)
+
+  defp deadline_passed?(nil), do: false
+  defp deadline_passed?(deadline), do: System.monotonic_time(:millisecond) >= deadline
+
+  defp invalid_text?(text, max_bytes) do
+    not is_binary(text) or text == "" or byte_size(text) > max_bytes
+  end
+
+  ## Game over
 
   defp check_winner(%{state: %{phase: :free_roam}} = server) do
     case Rules.winner(server.state) do
