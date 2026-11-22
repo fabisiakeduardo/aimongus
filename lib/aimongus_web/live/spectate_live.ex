@@ -28,6 +28,7 @@ defmodule AimongusWeb.SpectateLive do
 
   alias Aimongus.Game.Server
   alias Aimongus.Game.Map, as: GameMap
+  alias Aimongus.Game.Personality
 
   @feed_limit 200
   @cell 26
@@ -62,6 +63,7 @@ defmodule AimongusWeb.SpectateLive do
         speaking: nil,
         votes: %{},
         minds: %{},
+        selected_agent: nil,
         winner: nil,
         feed: [],
         feed_seq: 0
@@ -69,6 +71,25 @@ defmodule AimongusWeb.SpectateLive do
       |> refresh_state()
 
     {:ok, socket}
+  end
+
+  ## UI events
+
+  # Click a pawn to open its mind panel; click the same pawn again to
+  # close. The value arrives as a string — player ids may be atoms, so
+  # match against `to_string/1` of each known id.
+  @impl true
+  def handle_event("select_agent", %{"id" => raw}, socket) do
+    id = Enum.find(Map.keys(socket.assigns.players), &(to_string(&1) == raw))
+
+    selected =
+      if id && socket.assigns.selected_agent != id, do: id, else: nil
+
+    {:noreply, assign(socket, selected_agent: selected)}
+  end
+
+  def handle_event("deselect_agent", _params, socket) do
+    {:noreply, assign(socket, selected_agent: nil)}
   end
 
   ## Match events
@@ -298,11 +319,15 @@ defmodule AimongusWeb.SpectateLive do
           working: %{},
           speaking: nil,
           votes: %{},
+          minds: %{},
+          selected_agent: nil,
           winner: nil
         )
 
       state ->
         # the match may run a non-bundled map — resync everything
+        selected = socket.assigns.selected_agent
+
         assign(socket,
           running?: true,
           phase: state.phase,
@@ -312,6 +337,7 @@ defmodule AimongusWeb.SpectateLive do
           bodies: state.bodies,
           task_pool: state.tasks,
           working: %{},
+          selected_agent: if(Map.has_key?(state.players, selected), do: selected),
           winner: state.winner
         )
     end
@@ -437,6 +463,30 @@ defmodule AimongusWeb.SpectateLive do
 
   @doc false
   def feed_class(entry), do: "feed-item feed-#{entry.kind}"
+
+  @doc false
+  # Mind panel rows for a player's personality card: one per trait, in
+  # `Personality.traits/0` order, pairing the raw 1-10 value with the
+  # adjective phrase `Personality.describe/1` gives it.
+  def trait_rows(player) do
+    case player.personality do
+      %Personality{} = card ->
+        for {trait, phrase} <- Enum.zip(Personality.traits(), Personality.describe(card)) do
+          %{
+            trait: trait,
+            label: trait |> to_string() |> String.capitalize(),
+            value: Map.fetch!(card, trait),
+            phrase: phrase
+          }
+        end
+
+      _other ->
+        []
+    end
+  end
+
+  @doc false
+  def agent_room(map, player), do: GameMap.room_at(map, player.pos) || "a corridor"
 
   @doc false
   # the pawn/feed color for a player id; the same player gets the same

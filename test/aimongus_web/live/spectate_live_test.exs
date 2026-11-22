@@ -5,6 +5,7 @@ defmodule AimongusWeb.SpectateLiveTest do
 
   alias Aimongus.Game.Server
   alias Aimongus.Game.Map, as: GameMap
+  alias Aimongus.Game.Personality
 
   # Cafeteria (C) / MedBay (M) joined by a one-tile corridor at (6, 2).
   @ascii """
@@ -43,6 +44,20 @@ defmodule AimongusWeb.SpectateLiveTest do
 
   defp broadcast(match_id, event) do
     Phoenix.PubSub.broadcast(Aimongus.PubSub, "match:#{match_id}", event)
+  end
+
+  defp card(overrides \\ %{}) do
+    base = %{
+      deceptiveness: 9,
+      aggression: 2,
+      paranoia: 5,
+      chattiness: 8,
+      loyalty: 4,
+      risk: 10
+    }
+
+    {:ok, card} = Personality.new(Map.merge(base, overrides))
+    card
   end
 
   describe "mount" do
@@ -106,6 +121,92 @@ defmodule AimongusWeb.SpectateLiveTest do
       html = render(view)
       assert html =~ ~s(class="body")
       assert view |> element("#pawn-blue") |> render() =~ "ghost"
+    end
+  end
+
+  describe "mind panel" do
+    test "clicking a pawn opens the panel with the personality card", %{conn: conn} do
+      id =
+        start_match([
+          %{id: "red", name: "Red", pos: {4, 2}, personality: card()},
+          %{id: "blue", name: "Blue", pos: {8, 2}}
+        ])
+
+      {:ok, view, html} = live(conn, "/watch?match=#{id}")
+      refute html =~ ~s(id="mind-panel")
+
+      html = view |> element("#pawn-red") |> render_click()
+
+      assert html =~ ~s(id="mind-panel")
+      assert html =~ "Red"
+      assert html =~ "Cafeteria"
+      # trait values from the card, described by Personality.describe/1
+      assert html =~ "a master of lies"
+      assert html =~ "peaceful"
+      assert html =~ "reckless"
+      # no reasoning broadcast yet
+      assert html =~ "thinking"
+    end
+
+    test "the panel shows the latest reasoning summary", %{conn: conn} do
+      id = start_match([%{id: "red", name: "Red", pos: {4, 2}}])
+
+      {:ok, view, _html} = live(conn, "/watch?match=#{id}")
+
+      broadcast(id, {:reasoning, "red", "Blue is shadowing me"})
+      html = view |> element("#pawn-red") |> render_click()
+
+      assert html =~ "Blue is shadowing me"
+      refute html =~ "thinking"
+    end
+
+    test "a second click or the close button deselects the agent", %{conn: conn} do
+      id = start_match([%{id: "red", pos: {4, 2}}, %{id: "blue", pos: {8, 2}}])
+
+      {:ok, view, _html} = live(conn, "/watch?match=#{id}")
+
+      assert view |> element("#pawn-red") |> render_click() =~ ~s(id="mind-panel")
+      refute view |> element("#pawn-red") |> render_click() =~ ~s(id="mind-panel")
+
+      # clicking a different pawn switches the selection
+      html = view |> element("#pawn-blue") |> render_click()
+      assert html =~ ~s(id="mind-panel")
+
+      refute view |> element("#mind-panel-close") |> render_click() =~ ~s(id="mind-panel")
+    end
+
+    test "dead players show their status in the panel", %{conn: conn} do
+      id = start_match([%{id: "red", pos: {4, 2}}, %{id: "blue", pos: {5, 2}}])
+
+      {:ok, view, _html} = live(conn, "/watch?match=#{id}")
+
+      broadcast(id, {:killed, "blue", "red", {5, 2}})
+      html = view |> element("#pawn-blue") |> render_click()
+
+      assert html =~ ~s(id="mind-panel")
+      assert html =~ "Dead"
+    end
+  end
+
+  describe "feed styling" do
+    test "whisper lines are styled distinctly from meeting speech", %{conn: conn} do
+      id = start_match([%{id: "red", name: "Red"}, %{id: "blue", name: "Blue"}])
+
+      {:ok, view, _html} = live(conn, "/watch?match=#{id}")
+
+      broadcast(id, {:spoke, "red", "I saw Blue near the vent"})
+      broadcast(id, {:whisper, "blue", "red", ["red", "blue"], "meet me in nav"})
+
+      speech = view |> element("#feed-1") |> render()
+      whisper = view |> element("#feed-2") |> render()
+
+      assert speech =~ "feed-speech"
+      refute speech =~ "italic"
+      refute speech =~ "whispered"
+
+      assert whisper =~ "feed-whisper"
+      assert whisper =~ "italic"
+      assert whisper =~ "whispered"
     end
   end
 end

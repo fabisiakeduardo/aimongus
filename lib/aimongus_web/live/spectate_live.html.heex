@@ -121,10 +121,27 @@
         <g
           :for={{id, player} <- sorted_players(@players)}
           id={"pawn-#{id}"}
-          class={["pawn", (player.alive? && "alive") || "ghost", @speaking == id && "speaking"]}
+          class={[
+            "pawn cursor-pointer",
+            (player.alive? && "alive") || "ghost",
+            @speaking == id && "speaking",
+            @selected_agent == id && "selected"
+          ]}
+          phx-click="select_agent"
+          phx-value-id={id}
           style={"transform: translate(#{elem(player.pos, 0) * @cell}px, #{elem(player.pos, 1) * @cell}px); transition: transform 120ms linear;"}
           opacity={(player.alive? && "1") || "0.35"}
         >
+          <circle
+            :if={@selected_agent == id}
+            cx={@cell / 2}
+            cy={@cell * 0.6}
+            r={@cell * 0.56}
+            fill="none"
+            stroke="#e2e8f0"
+            stroke-width="1.5"
+            class="selected-ring"
+          />
           <text
             x={@cell / 2}
             y="-3"
@@ -225,6 +242,77 @@
     </main>
 
     <aside class="w-80 lg:w-96 flex flex-col border-l border-slate-800 bg-slate-900/40 min-h-0">
+      <% player = @players[@selected_agent] %>
+      <div
+        :if={player}
+        id="mind-panel"
+        class="border-b border-slate-700 bg-slate-900/80 px-4 py-3 space-y-2.5 shrink-0"
+      >
+        <% color = pawn_color(player) %>
+        <div class="flex items-center gap-2">
+          <span
+            class="inline-block w-3 h-3 rounded-full shrink-0"
+            style={"background: #{color}"}
+          ></span>
+          <span class="text-sm font-bold" style={"color: #{color}"}>
+            {player_name(@players, @selected_agent)}
+          </span>
+          <span class={[
+            "rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider",
+            (player.alive? && "bg-emerald-500/20 text-emerald-300") ||
+              "bg-rose-500/20 text-rose-300"
+          ]}>
+            {(player.alive? && "Alive") || "Dead"}
+          </span>
+          <span class="text-[10px] uppercase tracking-wider text-slate-500">
+            {role_label(player.role)}
+          </span>
+          <div class="flex-1"></div>
+          <button
+            id="mind-panel-close"
+            phx-click="deselect_agent"
+            class="text-slate-500 hover:text-slate-200 text-lg leading-none px-1"
+            aria-label="close mind panel"
+          >
+            ×
+          </button>
+        </div>
+        <div class="text-[11px] text-slate-400">
+          in {agent_room(@map, player)}
+        </div>
+        <div id="mind-card" class="space-y-1">
+          <div class="text-[10px] uppercase tracking-widest text-slate-500">Personality</div>
+          <div :if={trait_rows(player) == []} class="text-[11px] text-slate-500">
+            no card on file
+          </div>
+          <div :for={row <- trait_rows(player)} class="flex items-center gap-2 text-[11px]">
+            <span class="w-20 shrink-0 text-slate-400">{row.label}</span>
+            <div class="flex-1 h-1.5 rounded-full bg-slate-800 overflow-hidden">
+              <div
+                class="h-full rounded-full"
+                style={"width: #{row.value * 10}%; background: #{color}"}
+              >
+              </div>
+            </div>
+            <span class="w-4 shrink-0 text-right text-slate-500">{row.value}</span>
+            <span
+              class="w-28 shrink-0 truncate text-right italic text-slate-300"
+              title={row.phrase}
+            >
+              {row.phrase}
+            </span>
+          </div>
+        </div>
+        <div id="mind-reasoning">
+          <div class="text-[10px] uppercase tracking-widest text-slate-500">Latest thought</div>
+          <div :if={@minds[@selected_agent]} class="text-xs italic text-slate-300">
+            “{@minds[@selected_agent]}”
+          </div>
+          <div :if={is_nil(@minds[@selected_agent])} class="text-xs italic text-slate-500">
+            thinking…
+          </div>
+        </div>
+      </div>
       <div class="px-4 py-2 border-b border-slate-800 text-xs uppercase tracking-widest text-slate-400">
         Live feed
       </div>
@@ -248,19 +336,25 @@
                 <div class="text-sm text-slate-100">{entry.text}</div>
               </div>
             <% :whisper -> %>
-              <div class="rounded-lg px-3 py-1.5 bg-slate-800/30 border border-dashed border-slate-700 italic">
-                <div class="text-[10px] text-slate-400">
-                  <span style={"color: #{player_color(@players, entry.player)}"}>
+              <div class="ml-5 rounded-lg px-3 py-1.5 bg-slate-800/20 border border-dashed border-slate-700/80 italic opacity-90">
+                <div class="text-[10px] uppercase tracking-wider text-slate-500">
+                  <span
+                    class="font-semibold"
+                    style={"color: #{player_color(@players, entry.player)}"}
+                  >
                     {player_name(@players, entry.player)}
                   </span>
                   whispered<%= if entry.target do %>
                     to
-                    <span style={"color: #{player_color(@players, entry.target)}"}>
+                    <span
+                      class="font-semibold"
+                      style={"color: #{player_color(@players, entry.target)}"}
+                    >
                       {player_name(@players, entry.target)}
                     </span>
-                  <% end %>:
+                  <% end %>
                 </div>
-                <div class="text-sm text-slate-400">{entry.text}</div>
+                <div class="text-sm text-slate-500">{entry.text}</div>
               </div>
             <% :event -> %>
               <div class="flex items-baseline gap-2 px-2 py-1 text-sm text-slate-300">
