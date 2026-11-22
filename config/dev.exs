@@ -42,7 +42,7 @@ config :aimongus, AimongusWeb.Endpoint,
 # configured to run both http and https servers on
 # different ports.
 
-# Enable dev routes for dashboard and mailbox
+# Enable dev routes (e.g. /dev for LiveView dev tooling)
 config :aimongus, dev_routes: true
 
 # Do not include metadata nor timestamps in development logs
