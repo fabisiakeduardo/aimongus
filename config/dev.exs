@@ -45,6 +45,10 @@ config :aimongus, AimongusWeb.Endpoint,
 # Enable dev routes (e.g. /dev for LiveView dev tooling)
 config :aimongus, dev_routes: true
 
+# Give local CLI-backed agents (CodexCLI / DevinCLI) enough headroom
+# when multiple pawns think concurrently in dev.
+config :aimongus, Aimongus.Match.Manager, agent_opts: [poll_ms: 8_000, llm_timeout: 45_000]
+
 # Do not include metadata nor timestamps in development logs
 config :logger, :default_formatter, format: "[$level] $message\n"
 

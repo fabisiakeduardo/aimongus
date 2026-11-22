@@ -23,11 +23,21 @@ end
 config :aimongus, AimongusWeb.Endpoint,
   http: [port: String.to_integer(System.get_env("PORT", "4000"))]
 
-if System.get_env("AIMONGUS_LLM") == "stub" do
-  config :aimongus, :llm_adapters, %{default: Aimongus.LLM.Stub}
+case System.get_env("AIMONGUS_LLM") do
+  "stub" ->
+    config :aimongus, :llm_adapters, %{default: Aimongus.LLM.Stub}
 
-  config :aimongus, Aimongus.Match.Manager,
-    agent_opts: [poll_ms: 2_500, llm_opts: [respond: &Aimongus.LLM.Stub.demo_responder/1]]
+    config :aimongus, Aimongus.Match.Manager,
+      agent_opts: [poll_ms: 2_500, llm_opts: [respond: &Aimongus.LLM.Stub.demo_responder/1]]
+
+  "devin" ->
+    config :aimongus, :llm_adapters, %{default: Aimongus.LLM.DevinCLI}
+
+  "codex" ->
+    config :aimongus, :llm_adapters, %{default: Aimongus.LLM.CodexCLI}
+
+  _other ->
+    :ok
 end
 
 if config_env() == :dev do

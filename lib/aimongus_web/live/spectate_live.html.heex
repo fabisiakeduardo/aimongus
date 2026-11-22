@@ -249,12 +249,18 @@
     </div>
 
     <div class="flex flex-1 min-h-0">
-      <main class="relative flex-1 flex items-center justify-center min-w-0 space-bg">
-        <div class="map-stage relative rounded-2xl p-2">
+      <main class="relative flex-1 flex items-center justify-center min-w-0 min-h-0 p-4 overflow-hidden space-bg">
+        <div
+          class="map-stage relative rounded-2xl p-2 flex items-center justify-center max-w-full max-h-full"
+          style={"aspect-ratio: #{@map.width} / #{@map.height}; width: min(100%, calc((100vh - 5.5rem) * #{@map.width} / #{@map.height}));"}
+        >
           <svg
             id="ship-map"
+            width={@map.width * @cell}
+            height={@map.height * @cell}
             viewBox={"0 0 #{@map.width * @cell} #{@map.height * @cell}"}
-            class="block max-w-[calc(100vw-26rem)] max-h-[calc(100vh-5.5rem)] w-auto h-auto"
+            preserveAspectRatio="xMidYMid meet"
+            class="block w-full h-full"
             role="img"
             aria-label="ship map"
           >
