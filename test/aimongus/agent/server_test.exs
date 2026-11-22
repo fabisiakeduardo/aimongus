@@ -210,6 +210,17 @@ defmodule Aimongus.Agent.ServerTest do
       AgentServer.poll(pid)
       assert length(Stub.prompts(stub)) >= 2
     end
+
+    test "an unrecognized cast is dropped without crashing the agent" do
+      match_id = start_running()
+      {pid, _stub} = start_agent(match_id, "gamma")
+
+      GenServer.cast(pid, {:something, :future})
+      GenServer.cast(pid, :bogus_event)
+
+      assert {:submitted, :nothing, :ok} = AgentServer.poll(pid)
+      assert Process.alive?(pid)
+    end
   end
 
   describe "registration" do
@@ -291,6 +302,11 @@ defmodule Aimongus.Agent.ServerTest do
       assert {:ok, view} = GameServer.view_for(match_id, "alpha")
       assert view.role == :impostor
       assert view.phase == :free_roam
+
+      # role_mix is a counts map, never the dealt list — with
+      # deterministic dealing the list's order would encode the whole
+      # role assignment
+      assert view.role_mix == %{impostor: 2, crewmate: 3}
 
       # alpha sees beta and gamma (same room); delta sits in MedBay
       assert view.visible_players |> Enum.map(& &1.id) |> Enum.sort() ==
@@ -409,6 +425,43 @@ defmodule Aimongus.Agent.ServerTest do
 
       AgentServer.poll(alpha)
       assert_received {:spoke, "alpha", nil}
+    end
+
+    test "a rejected intent during a speak slot releases the floor with :nothing" do
+      match_id = start_running()
+
+      # a well-formed but illegal reply on alpha's slot — the engine
+      # rejects :wrong_phase and the agent must pass, not hold the floor
+      move_during_speech = fn prompt ->
+        if prompt =~ "It is YOUR turn to speak",
+          do: envelope(%{"type" => "move_to", "target" => "MedBay"}),
+          else: nothing_envelope()
+      end
+
+      {alpha, _as} = start_agent(match_id, "alpha", respond: move_during_speech)
+      {delta, _ds} = start_agent(match_id, "delta")
+      {gamma, _gs} = start_agent(match_id, "gamma")
+
+      :ok = GameServer.submit_intent(match_id, "alpha", {:kill, "beta"})
+      assert_received {:killed, "beta", "alpha", {5, 2}}
+
+      # sync alpha's body_seen wake-poll while still in free_roam so the
+      # first meeting trigger lands deterministically on its slot
+      AgentServer.poll(alpha)
+
+      :ok = GameServer.submit_intent(match_id, "gamma", :report)
+      assert_received {:meeting_started, {:report, "gamma"}}
+
+      # alpha's slot: move_to → {:rejected, :wrong_phase} → auto :nothing
+      AgentServer.poll(alpha)
+      assert_received {:spoke, "alpha", nil}
+
+      # the slot chain kept moving — delta and gamma got their turns
+      AgentServer.poll(delta)
+      assert_received {:spoke, "delta", nil}
+      AgentServer.poll(gamma)
+      assert_received {:spoke, "gamma", nil}
+      assert_received :voting_started
     end
 
     test "voting_started wakes every living agent; votes tally and eject" do

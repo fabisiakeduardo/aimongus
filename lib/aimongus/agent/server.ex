@@ -79,6 +79,8 @@ defmodule Aimongus.Agent.Server do
   alias Aimongus.Game.Server, as: GameServer
   alias Aimongus.LLM.{Client, Intent, Prompt}
 
+  require Logger
+
   @registry Aimongus.MatchRegistry
   @default_poll_ms 6_000
   @default_llm_timeout 30_000
@@ -252,6 +254,10 @@ defmodule Aimongus.Agent.Server do
   def handle_cast(:match_started, state), do: {:noreply, wake(state)}
   def handle_cast(:body_seen, state), do: {:noreply, wake(state)}
 
+  # Unknown/misdirected events are dropped — an agent must survive a
+  # message it doesn't understand, never crash on it.
+  def handle_cast(_message, state), do: {:noreply, state}
+
   ## Poll cycle
 
   # Triggers run the same cycle as the timer: fetch the filtered view,
@@ -275,6 +281,11 @@ defmodule Aimongus.Agent.Server do
         # the engine is gone — the match this agent played no longer
         # exists; stay idle rather than hammering a dead registry key
         {%{state | over?: true}, {:error, :match_down}}
+
+      {:error, reason} ->
+        Logger.warning("agent #{inspect(state.player_id)} view_for failed: #{inspect(reason)}")
+
+        {state, {:error, reason}}
     end
   end
 
@@ -327,7 +338,17 @@ defmodule Aimongus.Agent.Server do
             {%{state | over?: true}, {:error, :match_down}}
 
           reply ->
-            {note_reply(state, intent, reply), {:submitted, intent, reply}}
+            state = note_reply(state, intent, reply)
+
+            state =
+              case reply do
+                # a well-formed but illegal intent during our own speak
+                # slot must not leave the floor held — pass it
+                {:rejected, _reason} -> fail_slot(state, view)
+                _other -> state
+              end
+
+            {state, {:submitted, intent, reply}}
         end
 
       {:error, reason} ->

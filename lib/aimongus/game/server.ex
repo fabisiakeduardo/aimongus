@@ -1366,7 +1366,10 @@ defmodule Aimongus.Game.Server do
            tick: state.tick,
            alive?: player.alive?,
            personality: player.personality,
-           role_mix: state.config.roles,
+           # frequencies, not the ordered list — with deterministic
+           # dealing (shuffle_roles: false) the list's order encodes
+           # the whole role assignment
+           role_mix: Enum.frequencies(state.config.roles),
            tasks: task_view(state, player),
            vigilante_shot_used?: player.vigilante_shot_used?,
            visible_players: visible_players(state, player),

@@ -30,9 +30,11 @@ defmodule Aimongus.LLM.Prompt do
       reduced intent list
     * `:personality` — a `%Aimongus.Game.Personality{}` card, rendered
       verbatim via `Personality.describe/1`
-    * `:role_mix` — the match's role list; rendered as counts only
-      (`[:impostor, :impostor, :sheriff]` → "2 impostors, 1 sheriff"),
-      never attached to player names
+    * `:role_mix` — the match's roles as a `%{role => count}` map (a
+      bare list also works); rendered as counts only ("2 impostors,
+      1 sheriff"), never attached to player names. Callers should pass
+      frequencies — an ordered list can encode the assignment order
+      under deterministic dealing
     * `:tasks` — the agent's own task list, `%{task_id => done?}` or a
       list of `%{id: , done?: , room: }` maps
     * `:visible_players` — other living pawns inside vision. Only the
@@ -169,17 +171,26 @@ defmodule Aimongus.LLM.Prompt do
     |> Enum.join("\n")
   end
 
-  defp role_mix_line(%{role_mix: roles}) when is_list(roles) and roles != [] do
-    counts =
-      roles
-      |> Enum.frequencies()
-      |> Enum.sort_by(fn {role, n} -> {-n, role_name(role)} end)
-      |> Enum.map_join(", ", fn {role, n} -> "#{n} #{pluralize(role_name(role), n)}" end)
+  defp role_mix_line(view) do
+    case role_counts(view[:role_mix]) do
+      nil ->
+        nil
 
-    "- Roles dealt in this match (you do NOT know who has which): #{counts}."
+      counts ->
+        line =
+          counts
+          |> Enum.sort_by(fn {role, n} -> {-n, role_name(role)} end)
+          |> Enum.map_join(", ", fn {role, n} -> "#{n} #{pluralize(role_name(role), n)}" end)
+
+        "- Roles dealt in this match (you do NOT know who has which): #{line}."
+    end
   end
 
-  defp role_mix_line(_view), do: nil
+  # `%{role => count}` is the preferred shape — a bare list is accepted
+  # for compatibility but its order is never used.
+  defp role_counts(roles) when is_list(roles) and roles != [], do: Enum.frequencies(roles)
+  defp role_counts(%{} = counts) when map_size(counts) > 0, do: counts
+  defp role_counts(_other), do: nil
 
   defp self_section(view) do
     role = Map.fetch!(view, :role)
