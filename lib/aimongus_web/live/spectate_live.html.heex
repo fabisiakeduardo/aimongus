@@ -1,0 +1,288 @@
+<% badge = phase_badge(assigns) %>
+<div class="h-screen w-screen flex flex-col bg-slate-950 text-slate-100 overflow-hidden">
+  <header class="flex items-center gap-4 px-4 py-2 border-b border-slate-800 bg-slate-900/60">
+    <div class="flex items-baseline gap-2">
+      <span class="text-lg font-black tracking-widest text-rose-500">AIMONGUS</span>
+      <span class="text-xs text-slate-400">match {@match_id}</span>
+    </div>
+    <span class={[
+      "rounded-full px-2.5 py-0.5 text-[11px] font-semibold uppercase tracking-wider",
+      elem(badge, 1)
+    ]}>
+      {elem(badge, 0)}
+    </span>
+    <div :if={@running?} class="flex items-center gap-4 text-xs text-slate-400">
+      <span>{alive_count(@players)} alive</span>
+      <span :if={tasks_total(@task_pool) > 0}>
+        Tasks {tasks_done(@task_pool)}/{tasks_total(@task_pool)}
+      </span>
+    </div>
+    <div class="flex-1"></div>
+    <span class="text-[10px] uppercase tracking-wider text-slate-500">god view — spectators see all roles</span>
+  </header>
+
+  <div class="flex flex-1 min-h-0">
+    <main class="relative flex-1 flex items-center justify-center p-4 min-w-0">
+      <svg
+        id="ship-map"
+        viewBox={"0 0 #{@map.width * @cell} #{@map.height * @cell}"}
+        class="max-w-full max-h-full w-auto h-auto drop-shadow-[0_0_30px_rgba(30,58,138,0.35)]"
+        role="img"
+        aria-label="ship map"
+      >
+        <%!-- floor + walls --%>
+        <rect
+          :for={{x, y} <- Map.keys(@map.tiles)}
+          x={x * @cell}
+          y={y * @cell}
+          width={@cell}
+          height={@cell}
+          class="tile"
+          fill={
+            case tile_kind(@map, {x, y}) do
+              :wall -> "#0a0f1d"
+              :corridor -> "#16202f"
+              {:room, name} -> room_tint(name)
+            end
+          }
+          stroke="#0a0f1d"
+          stroke-width="0.5"
+        />
+
+        <%!-- room labels --%>
+        <text
+          :for={label <- @room_labels}
+          x={label.x}
+          y={label.y}
+          text-anchor="middle"
+          dominant-baseline="middle"
+          class="fill-slate-400/70 uppercase"
+          style="font-size: 9px; letter-spacing: 0.2em; pointer-events: none;"
+        >
+          {label.name}
+        </text>
+
+        <%!-- task spots --%>
+        <g
+          :for={{task_id, pos} <- Enum.sort(@map.tasks)}
+          id={"task-#{task_id}"}
+          class="task-spot"
+        >
+          <% {cx, cy} = pawn_center(pos) %>
+          <path
+            d={"M #{cx} #{cy - 6} L #{cx + 6} #{cy} L #{cx} #{cy + 6} L #{cx - 6} #{cy} Z"}
+            fill={if @task_pool[task_id], do: "#22c55e", else: "#facc15"}
+            fill-opacity={if @task_pool[task_id], do: "0.9", else: "0.55"}
+            stroke="#0a0f1d"
+            stroke-width="1"
+          />
+        </g>
+
+        <%!-- emergency button --%>
+        <g :if={@map.button} id="emergency-button" class="task-spot">
+          <% {bx, by} = pawn_center(@map.button) %>
+          <circle cx={bx} cy={by} r="7" fill="#7f1d1d" stroke="#ef4444" stroke-width="2">
+            <animate
+              attributeName="stroke-opacity"
+              values="1;0.3;1"
+              dur="2s"
+              repeatCount="indefinite"
+            />
+          </circle>
+          <circle cx={bx} cy={by} r="3" fill="#fecaca" />
+        </g>
+
+        <%!-- dead bodies --%>
+        <g
+          :for={body <- @bodies}
+          class="body"
+          style={"transform: translate(#{elem(body.pos, 0) * @cell}px, #{elem(body.pos, 1) * @cell}px)"}
+        >
+          <ellipse
+            cx={@cell / 2}
+            cy={@cell * 0.72}
+            rx={@cell * 0.38}
+            ry={@cell * 0.22}
+            fill={player_color(@players, body.player_id)}
+            opacity="0.55"
+          />
+          <rect
+            x={@cell / 2 - 2}
+            y={@cell * 0.2}
+            width="4"
+            height={@cell * 0.5}
+            rx="2"
+            fill="#e2e8f0"
+            opacity="0.9"
+          />
+        </g>
+
+        <%!-- pawns --%>
+        <g
+          :for={{id, player} <- sorted_players(@players)}
+          id={"pawn-#{id}"}
+          class={["pawn", (player.alive? && "alive") || "ghost", @speaking == id && "speaking"]}
+          style={"transform: translate(#{elem(player.pos, 0) * @cell}px, #{elem(player.pos, 1) * @cell}px); transition: transform 120ms linear;"}
+          opacity={(player.alive? && "1") || "0.35"}
+        >
+          <text
+            x={@cell / 2}
+            y="-3"
+            text-anchor="middle"
+            class="fill-slate-200"
+            style="font-size: 8px; font-weight: 600;"
+          >
+            {player_name(@players, id)}
+          </text>
+          <circle
+            :if={@speaking == id}
+            cx={@cell / 2}
+            cy={@cell * 0.6}
+            r={@cell * 0.52}
+            fill="none"
+            stroke="#facc15"
+            stroke-width="1.5"
+            class="animate-ping"
+          />
+          <circle
+            :if={murder_role?(player.role)}
+            cx={@cell / 2}
+            cy={@cell * 0.6}
+            r={@cell * 0.5}
+            fill="none"
+            stroke="#7f1d1d"
+            stroke-width="1"
+            stroke-dasharray="3 2"
+          />
+          <% color = pawn_color(player) %>
+          <rect
+            x={@cell * 0.16}
+            y={@cell * 0.34}
+            width={@cell * 0.22}
+            height={@cell * 0.34}
+            rx="2"
+            fill={color}
+            opacity="0.55"
+          />
+          <ellipse
+            cx={@cell / 2}
+            cy={@cell * 0.6}
+            rx={@cell * 0.34}
+            ry={@cell * 0.4}
+            fill={color}
+            stroke="#0a0f1d"
+            stroke-width="1"
+          />
+          <ellipse
+            cx={@cell * 0.62}
+            cy={@cell * 0.48}
+            rx={@cell * 0.2}
+            ry={@cell * 0.12}
+            fill="#bae6fd"
+            stroke="#0369a1"
+            stroke-width="0.75"
+          />
+          <g :if={@working[id]}>
+            <% {_task_id, pct} = @working[id] %>
+            <rect
+              x="3"
+              y={@cell - 4}
+              width={@cell - 6}
+              height="3"
+              rx="1.5"
+              fill="#0a0f1d"
+              opacity="0.8"
+            />
+            <rect
+              x="3"
+              y={@cell - 4}
+              width={(@cell - 6) * pct / 100}
+              height="3"
+              rx="1.5"
+              fill="#22c55e"
+            />
+          </g>
+        </g>
+      </svg>
+
+      <div
+        :if={not @running?}
+        class="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-slate-950/70"
+      >
+        <span class="text-2xl font-bold text-slate-300">Waiting for match…</span>
+        <span class="text-sm text-slate-500">
+          the page goes live as soon as the game starts
+        </span>
+      </div>
+
+      <div
+        :if={@winner}
+        class="absolute inset-x-0 top-6 mx-auto w-fit px-8 py-4 rounded-xl bg-slate-900/90 border border-slate-700 shadow-2xl text-center"
+      >
+        <div class="text-xs uppercase tracking-widest text-slate-400">Game over</div>
+        <div class="text-2xl font-black text-slate-100">{winner_text(@players, @winner)}</div>
+      </div>
+    </main>
+
+    <aside class="w-80 lg:w-96 flex flex-col border-l border-slate-800 bg-slate-900/40 min-h-0">
+      <div class="px-4 py-2 border-b border-slate-800 text-xs uppercase tracking-widest text-slate-400">
+        Live feed
+      </div>
+      <div
+        id="event-feed"
+        class="flex-1 flex flex-col-reverse overflow-y-auto px-3 py-2 gap-1.5 min-h-0"
+      >
+        <div :for={entry <- @feed} id={"feed-#{entry.seq}"} class={feed_class(entry)}>
+          <%= case entry.kind do %>
+            <% :speech -> %>
+              <div
+                class="rounded-lg px-3 py-2 bg-slate-800/80 border-l-4"
+                style={"border-color: #{player_color(@players, entry.player)}"}
+              >
+                <div
+                  class="text-[10px] font-bold"
+                  style={"color: #{player_color(@players, entry.player)}"}
+                >
+                  {player_name(@players, entry.player)}
+                </div>
+                <div class="text-sm text-slate-100">{entry.text}</div>
+              </div>
+            <% :whisper -> %>
+              <div class="rounded-lg px-3 py-1.5 bg-slate-800/30 border border-dashed border-slate-700 italic">
+                <div class="text-[10px] text-slate-400">
+                  <span style={"color: #{player_color(@players, entry.player)}"}>
+                    {player_name(@players, entry.player)}
+                  </span>
+                  whispered<%= if entry.target do %>
+                    to
+                    <span style={"color: #{player_color(@players, entry.target)}"}>
+                      {player_name(@players, entry.target)}
+                    </span>
+                  <% end %>:
+                </div>
+                <div class="text-sm text-slate-400">{entry.text}</div>
+              </div>
+            <% :event -> %>
+              <div class="flex items-baseline gap-2 px-2 py-1 text-sm text-slate-300">
+                <span
+                  class="inline-block w-2 h-2 rounded-full shrink-0 self-center"
+                  style={"background: #{player_color(@players, entry.player)}"}
+                ></span>
+                <span>
+                  <b style={"color: #{player_color(@players, entry.player)}"}>
+                    {player_name(@players, entry.player)}
+                  </b>
+                  {entry.text}
+                </span>
+              </div>
+            <% :system -> %>
+              <div class="text-center text-xs text-slate-500 py-1">{entry.text}</div>
+          <% end %>
+        </div>
+        <div :if={@feed == []} class="text-center text-xs text-slate-600 py-6">
+          match events will appear here
+        </div>
+      </div>
+    </aside>
+  </div>
+</div>
