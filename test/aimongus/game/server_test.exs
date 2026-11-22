@@ -338,7 +338,7 @@ defmodule Aimongus.Game.ServerTest do
       id = start_running()
 
       assert :ok = Server.submit_intent(id, "p2", {:whisper, "psst", nil})
-      assert_receive {:whisper, "p2", audience, "psst"}
+      assert_receive {:whisper, "p2", nil, audience, "psst"}
       # p1 ~1 tile, p3 ~1.4 tiles away; p4 sits in MedBay >3 tiles out
       assert audience == ["p1", "p3"]
     end
@@ -347,7 +347,7 @@ defmodule Aimongus.Game.ServerTest do
       id = start_running()
 
       assert :ok = Server.submit_intent(id, "p4", {:whisper, "anyone?", "p1"})
-      assert_receive {:whisper, "p4", [], "anyone?"}
+      assert_receive {:whisper, "p4", "p1", [], "anyone?"}
     end
   end
 

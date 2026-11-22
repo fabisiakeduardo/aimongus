@@ -17,6 +17,8 @@ defmodule Aimongus.Game.State do
     * `:kill_range` — tiles, Euclidean (default `1.5`, i.e. adjacent incl. diagonals)
     * `:kill_cooldown_ticks` — ticks between kills (default `300`, ~30s at 10 Hz)
     * `:whisper_radius` — tiles, Euclidean (default `3.0`)
+    * `:whisper_cooldown_ticks` — ticks between whispers per speaker
+      (default `50`, ~5s at 10 Hz); anti-spam, whispers are rate-limited
     * `:tasks_per_player` — task ids drawn per player (default `3`)
     * `:roles` — role list for the match (default: the 9-player mix:
       2 impostors, 1 sheriff, 1 medic, 1 jester, 4 crewmates)
@@ -62,7 +64,8 @@ defmodule Aimongus.Game.State do
     @moduledoc """
     A single pawn: identity, secret role, personality card, position and
     per-player ability state (kill cooldown, role ability cooldown,
-    medic protection, vigilante shot, current movement path).
+    whisper rate-limit, medic protection, vigilante shot, current
+    movement path).
     """
 
     defstruct id: nil,
@@ -76,6 +79,7 @@ defmodule Aimongus.Game.State do
               path: [],
               kill_ready_at: 0,
               ability_ready_at: 0,
+              whisper_ready_at: 0,
               protected_until: nil,
               vigilante_shot_used?: false
 
@@ -92,6 +96,7 @@ defmodule Aimongus.Game.State do
             path: [Aimongus.Game.Map.pos()],
             kill_ready_at: non_neg_integer(),
             ability_ready_at: non_neg_integer(),
+            whisper_ready_at: non_neg_integer(),
             protected_until: non_neg_integer() | nil,
             vigilante_shot_used?: boolean()
           }
@@ -121,6 +126,7 @@ defmodule Aimongus.Game.State do
     kill_range: 1.5,
     kill_cooldown_ticks: 300,
     whisper_radius: 3.0,
+    whisper_cooldown_ticks: 50,
     tasks_per_player: 3,
     roles: @default_roles,
     reveal_role_on_eject: true,

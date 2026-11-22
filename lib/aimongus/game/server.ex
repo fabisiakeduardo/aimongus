@@ -79,9 +79,12 @@ defmodule Aimongus.Game.Server do
     * `:press_button` — within `config.button_range` of the map's `B`
       spot; calls a meeting.
     * `{:whisper, text, target?}` — broadcasts
-      `{:whisper, from, audience, text}` where `audience` is
+      `{:whisper, from, target, audience, text}` where `audience` is
       `Rules.whisper_audience/2`. Radius-only per the SDD ruling: `target`
-      selects an addressee, never extends the audience.
+      selects an addressee, never extends the audience — the event keeps
+      both so consumers can tell "addressed" from "heard". `nil` target
+      means an untargeted whisper. Each speaker is rate-limited to one
+      whisper per `config.whisper_cooldown_ticks`.
     * `:nothing` — idles; clears path and task progress.
 
   `{:speak, text}` and `{:vote, choice}` submitted in `:free_roam` are
@@ -140,7 +143,9 @@ defmodule Aimongus.Game.Server do
       `:unknown_target`, `:target_dead`, `{:cooldown, ticks_left}`,
       `:out_of_range`
     * `:no_body` (report), `:no_button`, `:not_at_button` (press_button)
-    * `:invalid_text` (whisper, speak)
+    * `:invalid_text` (whisper, speak); whisper also rejects
+      `:unknown_target`/`:target_dead` for a bad addressee and
+      `{:cooldown, ticks_left}` inside `whisper_cooldown_ticks`
     * `:not_your_turn` (speak), `:unknown_target`, `:target_dead` (vote)
 
   ## Ghosts
@@ -179,7 +184,8 @@ defmodule Aimongus.Game.Server do
     * `{:ejected, id, role | nil}` (role is `nil` when
       `config.reveal_role_on_eject` is false), `:no_ejection`
     * `:meeting_ended` — the world is live again in `:free_roam`
-    * `{:whisper, from_id, audience_ids, text}`
+    * `{:whisper, from_id, addressee_id | nil, audience_ids, text}` —
+      the addressee is who was named; the audience is who actually heard
     * `{:game_over, winner}` where `winner` is `Rules.winner/1`'s shape
 
   `Rules.winner/1` is only evaluated once the match is in `:free_roam`
@@ -465,10 +471,10 @@ defmodule Aimongus.Game.Server do
   defp dispatch_intent(server, id, {:protect, target}), do: exec_protect(server, id, target)
   defp dispatch_intent(server, id, :report), do: exec_report(server, id)
   defp dispatch_intent(server, id, :press_button), do: exec_button(server, id)
-  defp dispatch_intent(server, id, {:whisper, text}), do: exec_whisper(server, id, text)
+  defp dispatch_intent(server, id, {:whisper, text}), do: exec_whisper(server, id, text, nil)
 
-  defp dispatch_intent(server, id, {:whisper, text, _target}),
-    do: exec_whisper(server, id, text)
+  defp dispatch_intent(server, id, {:whisper, text, target}),
+    do: exec_whisper(server, id, text, target)
 
   # speak/vote are real intents — just wrong phase while roaming
   defp dispatch_intent(server, _id, {:speak, _}), do: {{:rejected, :wrong_phase}, server}
@@ -784,20 +790,36 @@ defmodule Aimongus.Game.Server do
     end
   end
 
-  defp exec_whisper(server, id, text) do
-    player = server.state.players[id]
+  # `target` is the *addressee*, not an audience extension (radius wins
+  # per the SDD ruling): it must be a living player, and the broadcast
+  # carries it alongside the audience so consumers can tell "addressed"
+  # from "heard". The speaker's `whisper_ready_at` rate-limits the feed
+  # — an agent polling every tick would otherwise spam it.
+  defp exec_whisper(server, id, text, target) do
+    state = server.state
+    player = state.players[id]
+    addressee = if target == nil, do: nil, else: state.players[target]
 
-    cond do
-      not player.alive? ->
-        {{:rejected, :dead}, server}
+    rejection =
+      cond do
+        not player.alive? -> :dead
+        target != nil and addressee == nil -> :unknown_target
+        target != nil and not addressee.alive? -> :target_dead
+        invalid_text?(text, @max_whisper_bytes) -> :invalid_text
+        state.tick < player.whisper_ready_at -> {:cooldown, player.whisper_ready_at - state.tick}
+        true -> nil
+      end
 
-      invalid_text?(text, @max_whisper_bytes) ->
-        {{:rejected, :invalid_text}, server}
+    if rejection do
+      {{:rejected, rejection}, server}
+    else
+      audience = Rules.whisper_audience(state, id)
 
-      true ->
-        audience = Rules.whisper_audience(server.state, id)
-        broadcast(server, {:whisper, id, audience, text})
-        {:ok, server}
+      player = %{player | whisper_ready_at: state.tick + state.config.whisper_cooldown_ticks}
+      server = put_in(server.state.players[id], player)
+
+      broadcast(server, {:whisper, id, target, audience, text})
+      {:ok, server}
     end
   end
 
