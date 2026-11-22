@@ -95,7 +95,8 @@
 /* AImongUS art direction: a sci-fi display face for titles/labels and a
    console-flavored mono for the event log. Loaded in root.html.heex. */
 @theme {
-  --font-display: "Orbitron", "Rajdhani", "Segoe UI", sans-serif;
+  --font-display: "Luckiest Guy", "Rajdhani", "Segoe UI", sans-serif;
+  --font-label: "Rajdhani", "Segoe UI", sans-serif;
   --font-log: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
 }
 

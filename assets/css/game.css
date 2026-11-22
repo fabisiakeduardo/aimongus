@@ -76,6 +76,30 @@
   animation: pawn-bob 2.6s ease-in-out infinite;
 }
 
+/* Waddle: while a pawn travels it rocks side-to-side on its feet,
+   faster and more urgent than the idle bob. */
+@keyframes pawn-waddle {
+  0%,
+  100% {
+    transform: rotate(-5deg) translateY(0);
+  }
+  25% {
+    transform: rotate(0deg) translateY(-2.2px);
+  }
+  50% {
+    transform: rotate(5deg) translateY(0);
+  }
+  75% {
+    transform: rotate(0deg) translateY(-2.2px);
+  }
+}
+
+.pawn.alive.moving .pawn-bob {
+  transform-box: fill-box;
+  transform-origin: 50% 90%;
+  animation: pawn-waddle 0.5s ease-in-out infinite;
+}
+
 /* Dead pawns drift like ghosts — slower, floating, semi-transparent. */
 @keyframes ghost-float {
   0%,
@@ -277,40 +301,99 @@
   );
 }
 
-/* The discussion table: a glowing conference-room ellipse. */
-.meeting-table {
-  position: relative;
-  width: 340px;
-  height: 215px;
-  border-radius: 50%;
-  background:
-    radial-gradient(ellipse at 50% 32%, rgba(148, 163, 184, 0.14), transparent 55%),
-    radial-gradient(ellipse at 50% 50%, #232c47 0%, #141a2e 68%, #0d1322 100%);
-  border: 2px solid rgba(100, 116, 160, 0.55);
-  box-shadow:
-    0 0 40px rgba(59, 130, 246, 0.25),
-    inset 0 0 46px rgba(0, 0, 0, 0.55);
+/* The vote tablet: a chunky slate handheld panel, like the in-game
+   discussion device — light faceplate, dark bezel. */
+.vote-tablet {
+  animation: tablet-drop 0.45s cubic-bezier(0.2, 0.9, 0.3, 1.15);
 }
 
-/* Seats are absolutely positioned around the table edge by inline
-   left/top percentages computed server-side. */
-.meeting-seat {
-  position: absolute;
-  transform: translate(-50%, -50%);
+@keyframes tablet-drop {
+  0% {
+    opacity: 0;
+    transform: translateY(22px) scale(0.96);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
 }
 
-@keyframes seat-speak {
+@keyframes vote-row-speak {
   0%,
   100% {
-    box-shadow: 0 0 0 2px rgba(250, 204, 21, 0.5);
+    box-shadow: inset 0 0 0 2px rgba(217, 119, 6, 0.75);
   }
   50% {
-    box-shadow: 0 0 0 5px rgba(250, 204, 21, 0.15);
+    box-shadow: inset 0 0 0 3px rgba(217, 119, 6, 0.3);
   }
 }
 
-.meeting-seat.speaking .seat-chip {
-  animation: seat-speak 1s ease-in-out infinite;
+.vote-row-speaking {
+  animation: vote-row-speak 1s ease-in-out infinite;
+}
+
+/* ---------- sabotage ---------- */
+
+/* Lights-out: heavy vignette over the whole map so only the pool of
+   light right around the pawns reads — the ship goes dark. */
+.lights-out {
+  pointer-events: none;
+  background: radial-gradient(
+    ellipse 55% 50% at 50% 50%,
+    transparent 30%,
+    rgba(2, 4, 10, 0.82) 78%,
+    rgba(1, 2, 6, 0.94) 100%
+  );
+  animation: lights-fade 0.5s ease-out;
+}
+
+@keyframes lights-fade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+/* The alert band: hazard stripes pulsing red, like the in-game alarm. */
+.sabotage-alert {
+  background-image: repeating-linear-gradient(
+    -45deg,
+    rgba(185, 28, 28, 0.55) 0 14px,
+    rgba(20, 8, 8, 0.55) 14px 28px
+  );
+  border-bottom: 1px solid rgba(248, 113, 113, 0.4);
+  animation: alert-pulse 1.1s ease-in-out infinite;
+}
+
+@keyframes alert-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.72;
+  }
+}
+
+/* Reactor countdown: drains left-to-right over the real meltdown
+   window (inline animation-duration set from the event). */
+.meltdown-bar {
+  width: 100%;
+  transform-origin: left;
+  animation-name: meltdown-drain;
+  animation-timing-function: linear;
+  animation-fill-mode: forwards;
+}
+
+@keyframes meltdown-drain {
+  from {
+    transform: scaleX(1);
+  }
+  to {
+    transform: scaleX(0);
+  }
 }
 
 /* ---------- winner banner ---------- */

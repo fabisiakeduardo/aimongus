@@ -6,12 +6,40 @@
     phx-hook="SoundHook"
     class="h-screen w-screen flex flex-col bg-[#04060c] text-slate-100 overflow-hidden"
   >
-    <header class="flex items-center gap-4 px-4 py-2 border-b border-slate-800/80 bg-gradient-to-b from-[#0b1120] to-[#080d18]">
+    <header class="flex items-center gap-4 px-4 py-2 border-b-2 border-[#1c2b33] bg-gradient-to-b from-[#22333d] to-[#17242c]">
       <div class="flex items-baseline gap-2">
-        <span class="font-display text-lg font-extrabold tracking-[0.3em] bg-gradient-to-r from-rose-400 via-rose-500 to-orange-400 bg-clip-text text-transparent drop-shadow-[0_0_14px_rgba(244,63,94,0.45)]">
-          AIMONGUS
+        <svg viewBox="0 0 20 23" class="w-4 h-5 self-center -rotate-6" aria-hidden="true">
+          <rect
+            x="1"
+            y="7.5"
+            width="5.5"
+            height="9.5"
+            rx="2.4"
+            fill="#8f1d1d"
+            stroke="#0d161c"
+            stroke-width="1"
+          />
+          <path
+            d="M 6.5 20.5 L 6.5 9 Q 6.5 4 11 4 Q 15.5 4 15.5 9 L 15.5 20.5 L 13.2 20.5 L 13.2 18.8 Q 13.2 17.8 11 17.8 Q 8.8 17.8 8.8 18.8 L 8.8 20.5 Z"
+            fill="#c92a2a"
+            stroke="#0d161c"
+            stroke-width="1.1"
+          />
+          <rect
+            x="10"
+            y="6"
+            width="6.5"
+            height="4.6"
+            rx="2.3"
+            fill="#bfe8fa"
+            stroke="#0d161c"
+            stroke-width="1"
+          />
+        </svg>
+        <span class="font-display text-xl text-[#e8f4f4] drop-shadow-[2px_2px_0_rgba(0,0,0,0.55)] -rotate-1 tracking-wide">
+          <span class="text-[#ff5c5c]">AI</span>MONGUS
         </span>
-        <span class="font-log text-[10px] text-slate-500">match {@match_id}</span>
+        <span class="font-log text-[10px] text-[#7d97a3]">match {@match_id}</span>
       </div>
       <span class={[
         "rounded-full px-2.5 py-0.5 text-[11px] font-semibold uppercase tracking-wider",
@@ -34,9 +62,9 @@
         id="sound-toggle"
         phx-click="toggle_sound"
         class={[
-          "flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wider transition-colors",
-          (@muted && "border-rose-500/50 bg-rose-500/10 text-rose-300 hover:bg-rose-500/20") ||
-            "border-slate-700 text-slate-300 hover:bg-slate-800 hover:text-slate-100"
+          "flex items-center gap-1.5 rounded-lg border-b-4 px-3 py-1 font-label text-[12px] font-bold uppercase tracking-wider transition-all active:translate-y-0.5 active:border-b-2",
+          (@muted && "border-[#8a3232] bg-[#b03a3a] text-[#ffe3e3] hover:bg-[#c04343]") ||
+            "border-[#1d5f63] bg-[#3fc5cb] text-[#0d2a2d] hover:bg-[#4fd4da]"
         ]}
         aria-label={(@muted && "Enable sound") || "Mute sound"}
       >
@@ -50,15 +78,15 @@
         id="admin-toggle"
         phx-click="toggle_admin"
         class={[
-          "flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wider transition-colors",
-          (@admin_open? && "border-sky-500/60 bg-sky-500/15 text-sky-300") ||
-            "border-slate-700/80 text-slate-400 hover:bg-slate-800 hover:text-slate-200"
+          "flex items-center gap-1.5 rounded-lg border-b-4 px-3 py-1 font-label text-[12px] font-bold uppercase tracking-wider transition-all active:translate-y-0.5 active:border-b-2",
+          (@admin_open? && "border-[#1d5f63] bg-[#3fc5cb] text-[#0d2a2d]") ||
+            "border-[#33505c] bg-[#233740] text-[#9fc3cc] hover:bg-[#2a434d] hover:text-[#cfe8ec]"
         ]}
         aria-label="Match admin"
       >
         <.icon name="hero-adjustments-horizontal" class="size-3.5" /> Admin
       </button>
-      <span class="hidden sm:inline text-[10px] uppercase tracking-wider text-slate-600">
+      <span class="hidden sm:inline font-label text-[11px] font-semibold uppercase tracking-wider text-[#5f7d89]">
         god view — spectators see all roles
       </span>
     </header>
@@ -312,8 +340,8 @@
               d={edge.d}
               fill="none"
               stroke={room_edge_color(@room_hues, edge.name)}
-              stroke-width="5"
-              stroke-opacity="0.18"
+              stroke-width="4"
+              stroke-opacity="0.12"
               stroke-linejoin="round"
               stroke-linecap="round"
             />
@@ -322,9 +350,30 @@
               d={edge.d}
               fill="none"
               stroke={room_edge_color(@room_hues, edge.name)}
-              stroke-width="1.3"
+              stroke-width="1.7"
               stroke-opacity="0.9"
               stroke-linejoin="round"
+            />
+
+            <%!-- hull rim: a crisp metallic edge framing the ship silhouette --%>
+            <rect
+              x="1.25"
+              y="1.25"
+              width={@map.width * @cell - 2.5}
+              height={@map.height * @cell - 2.5}
+              fill="none"
+              stroke="#263549"
+              stroke-width="2.5"
+            />
+            <rect
+              x="4"
+              y="4"
+              width={@map.width * @cell - 8}
+              height={@map.height * @cell - 8}
+              fill="none"
+              stroke="#0f172a"
+              stroke-width="1"
+              opacity="0.8"
             />
 
             <%!-- door sills --%>
@@ -351,6 +400,15 @@
             >
               {label.name}
             </text>
+
+            <%!-- room furniture (decorative) --%>
+            <g
+              :for={prop <- @decor.props}
+              id={"prop-#{prop.kind}-#{prop.x}-#{prop.y}"}
+              transform={"translate(#{prop.x * @cell} #{prop.y * @cell})"}
+            >
+              <.prop_art kind={prop.kind} cell={@cell} />
+            </g>
 
             <%!-- task spots --%>
             <g
@@ -443,12 +501,13 @@
                 "pawn cursor-pointer",
                 (player.alive? && "alive") || "ghost",
                 MapSet.member?(@ejected_ids, id) && "ejected",
+                MapSet.member?(@moving, id) && "moving",
                 @speaking == id && "speaking",
                 @selected_agent == id && "selected"
               ]}
               phx-click="select_agent"
               phx-value-id={id}
-              style={"transform: translate(#{elem(player.pos, 0) * @cell}px, #{elem(player.pos, 1) * @cell}px); transition: transform 120ms linear;"}
+              style={"transform: #{pawn_translate(@players, id, @cell)}; transition: transform 100ms linear;"}
               opacity={(player.alive? && "1") || "0.35"}
             >
               <circle
@@ -500,47 +559,49 @@
               />
               <% color = pawn_color(player) %>
               <g class="pawn-bob" style={"animation-delay: #{bob_delay(id)}ms"}>
-                <ellipse
-                  cx={@cell / 2}
-                  cy={@cell * 0.88}
-                  rx={@cell * 0.26}
-                  ry={@cell * 0.07}
-                  fill="#000"
-                  opacity="0.35"
-                />
-                <rect
-                  x={@cell * 0.18}
-                  y={@cell * 0.38}
-                  width={@cell * 0.16}
-                  height={@cell * 0.33}
-                  rx={@cell * 0.07}
-                  fill={shade(color, 0.6)}
-                  stroke="#04060c"
-                  stroke-width="0.5"
-                />
-                <path
-                  d={"M #{@cell * 0.33} #{@cell * 0.84} L #{@cell * 0.33} #{@cell * 0.45} Q #{@cell * 0.33} #{@cell * 0.24} #{@cell * 0.51} #{@cell * 0.24} Q #{@cell * 0.69} #{@cell * 0.24} #{@cell * 0.69} #{@cell * 0.45} L #{@cell * 0.69} #{@cell * 0.84} L #{@cell * 0.57} #{@cell * 0.84} L #{@cell * 0.57} #{@cell * 0.78} Q #{@cell * 0.57} #{@cell * 0.73} #{@cell * 0.51} #{@cell * 0.73} Q #{@cell * 0.45} #{@cell * 0.73} #{@cell * 0.45} #{@cell * 0.78} L #{@cell * 0.45} #{@cell * 0.84} Z"}
-                  fill={color}
-                  stroke={shade(color, 0.45)}
-                  stroke-width="0.8"
-                />
-                <rect
-                  x={@cell * 0.46}
-                  y={@cell * 0.32}
-                  width={@cell * 0.26}
-                  height={@cell * 0.17}
-                  rx={@cell * 0.085}
-                  fill="#9fd9f4"
-                  stroke="#3f86ad"
-                  stroke-width="0.7"
-                />
-                <circle
-                  cx={@cell * 0.55}
-                  cy={@cell * 0.37}
-                  r={@cell * 0.035}
-                  fill="#fff"
-                  opacity="0.85"
-                />
+                <g transform={"translate(#{@cell / 2} #{@cell * 0.55}) scale(1.3) translate(#{-@cell / 2} #{-@cell * 0.55})"}>
+                  <ellipse
+                    cx={@cell / 2}
+                    cy={@cell * 0.9}
+                    rx={@cell * 0.3}
+                    ry={@cell * 0.075}
+                    fill="#000"
+                    opacity="0.35"
+                  />
+                  <rect
+                    x={@cell * 0.11}
+                    y={@cell * 0.4}
+                    width={@cell * 0.18}
+                    height={@cell * 0.34}
+                    rx={@cell * 0.075}
+                    fill={shade(color, 0.6)}
+                    stroke="#101823"
+                    stroke-width="0.9"
+                  />
+                  <path
+                    d={"M #{@cell * 0.26} #{@cell * 0.86} L #{@cell * 0.26} #{@cell * 0.48} Q #{@cell * 0.26} #{@cell * 0.22} #{@cell * 0.51} #{@cell * 0.22} Q #{@cell * 0.76} #{@cell * 0.22} #{@cell * 0.76} #{@cell * 0.48} L #{@cell * 0.76} #{@cell * 0.86} L #{@cell * 0.63} #{@cell * 0.86} L #{@cell * 0.63} #{@cell * 0.8} Q #{@cell * 0.63} #{@cell * 0.74} #{@cell * 0.51} #{@cell * 0.74} Q #{@cell * 0.39} #{@cell * 0.74} #{@cell * 0.39} #{@cell * 0.8} L #{@cell * 0.39} #{@cell * 0.86} Z"}
+                    fill={color}
+                    stroke="#101823"
+                    stroke-width="1.1"
+                  />
+                  <rect
+                    x={@cell * 0.45}
+                    y={@cell * 0.31}
+                    width={@cell * 0.29}
+                    height={@cell * 0.19}
+                    rx={@cell * 0.095}
+                    fill="#bfe8fa"
+                    stroke="#182530"
+                    stroke-width="1"
+                  />
+                  <circle
+                    cx={@cell * 0.57}
+                    cy={@cell * 0.375}
+                    r={@cell * 0.04}
+                    fill="#fff"
+                    opacity="0.85"
+                  />
+                </g>
               </g>
               <g :if={@working[id]}>
                 <% {_task_id, pct} = @working[id] %>
@@ -603,7 +664,30 @@
               />
             </rect>
           </svg>
+          <div :if={lights_out?(@sabotage)} class="lights-out absolute inset-0 rounded-2xl"></div>
           <div class="vignette absolute inset-0 rounded-2xl"></div>
+        </div>
+
+        <div
+          :if={@sabotage}
+          id="sabotage-alert"
+          class="sabotage-alert absolute inset-x-0 top-0 z-10 flex items-center justify-center gap-3 px-4 py-1.5"
+        >
+          <.icon name="hero-exclamation-triangle-solid" class="size-4 text-red-300" />
+          <span class="font-display text-[11px] font-extrabold uppercase tracking-[0.3em] text-red-200">
+            {(@sabotage.kind == :reactor && "Reactor meltdown — fix at Reactor") ||
+              "Lights out — fix at Electrical"}
+          </span>
+          <span
+            :if={@sabotage[:ends_in_seconds]}
+            class="relative w-28 h-1.5 rounded-full bg-red-950/80 overflow-hidden"
+          >
+            <span
+              class="meltdown-bar absolute inset-y-0 left-0 bg-red-400"
+              style={"animation-duration: #{@sabotage.ends_in_seconds}s"}
+            ></span>
+          </span>
+          <.icon name="hero-exclamation-triangle-solid" class="size-4 text-red-300" />
         </div>
 
         <div
@@ -643,30 +727,95 @@
               {banner_title}
             </span>
           </div>
-          <div class="meeting-table">
-            <% seats = alive_players(@players) %>
-            <div
-              :for={{{id, player}, idx} <- Enum.with_index(seats)}
-              class={["meeting-seat", @speaking == id && "speaking"]}
-              style={seat_style(idx, length(seats))}
-            >
-              <div class="seat-chip flex items-center gap-1.5 rounded-full bg-slate-900/90 border border-slate-700 pl-1.5 pr-2.5 py-1">
-                <span
-                  class="inline-block w-2.5 h-2.5 rounded-full shrink-0"
-                  style={"background: #{pawn_color(player)}"}
-                ></span>
-                <span class="font-log text-[10px] text-slate-200 whitespace-nowrap">
-                  {player_name(@players, id)}
-                </span>
+          <div
+            id="vote-tablet"
+            class="vote-tablet w-[27rem] max-w-[94%] rounded-2xl border-[5px] border-[#17242e] bg-[#c3cfd9] shadow-[0_18px_55px_rgba(0,0,0,0.7)] overflow-hidden"
+          >
+            <div class="flex items-center justify-between bg-[#a9bcc9] border-b-2 border-[#8fa5b5] px-4 py-2">
+              <span class="font-display text-[13px] font-extrabold uppercase tracking-[0.16em] text-[#1f2e3a]">
+                Who is the impostor?
+              </span>
+              <.icon name="hero-megaphone-solid" class="size-5 text-[#c2410c]" />
+            </div>
+            <div class="grid grid-cols-3 gap-1.5 p-2.5">
+              <div
+                :for={{id, player} <- sorted_players(@players)}
+                id={"vote-row-#{id}"}
+                class={[
+                  "vote-row flex items-center gap-1.5 rounded-md px-1.5 py-1 min-w-0",
+                  (player.alive? && "bg-white/55") || "bg-white/25 opacity-60",
+                  @speaking == id && "vote-row-speaking"
+                ]}
+              >
+                <svg viewBox="0 0 20 23" class="w-4 h-5 shrink-0" aria-hidden="true">
+                  <rect
+                    x="1"
+                    y="7.5"
+                    width="5.5"
+                    height="9.5"
+                    rx="2.4"
+                    fill={shade(pawn_color(player), 0.62)}
+                    stroke="#182530"
+                    stroke-width="1"
+                  />
+                  <path
+                    d="M 6.5 20.5 L 6.5 9 Q 6.5 4 11 4 Q 15.5 4 15.5 9 L 15.5 20.5 L 13.2 20.5 L 13.2 18.8 Q 13.2 17.8 11 17.8 Q 8.8 17.8 8.8 18.8 L 8.8 20.5 Z"
+                    fill={pawn_color(player)}
+                    stroke="#182530"
+                    stroke-width="1.1"
+                  />
+                  <rect
+                    x="10"
+                    y="6"
+                    width="6.5"
+                    height="4.6"
+                    rx="2.3"
+                    fill="#bfe8fa"
+                    stroke="#182530"
+                    stroke-width="1"
+                  />
+                </svg>
+                <div class="min-w-0 flex-1">
+                  <div class={[
+                    "font-display text-[10px] font-bold uppercase tracking-wide truncate",
+                    (player.alive? && "text-[#1f2e3a]") || "text-[#5c6b76] line-through"
+                  ]}>
+                    {player_name(@players, id)}
+                  </div>
+                  <div
+                    :if={@phase == :voting && Map.has_key?(@votes, id)}
+                    class="flex items-center gap-1 text-[9px] font-bold uppercase text-[#b3392e] truncate"
+                  >
+                    <.icon name="hero-megaphone-solid" class="size-3 shrink-0" />
+                    {vote_label(@votes[id], @players)}
+                  </div>
+                </div>
                 <span
                   :if={@phase == :voting && Map.has_key?(@votes, id)}
-                  class="text-emerald-400 text-[10px] leading-none"
-                >✓</span>
+                  class="text-emerald-600 text-xs font-black leading-none"
+                >
+                  ✓
+                </span>
+                <span
+                  :if={not player.alive?}
+                  class="text-[#8c9aa5] text-xs font-black leading-none"
+                >
+                  ✗
+                </span>
               </div>
+            </div>
+            <div class="flex items-center justify-between px-3.5 py-2 border-t-2 border-[#8fa5b5] bg-[#aebfd0]">
+              <span class="rounded-md bg-[#1f2e3a] px-3 py-1 font-display text-[9px] font-bold uppercase tracking-[0.2em] text-slate-200">
+                Skip vote
+              </span>
+              <span class="font-log text-[10px] font-bold uppercase tracking-wider text-[#3a4b58]">
+                {(@phase == :voting && "#{map_size(@votes)}/#{alive_count(@players)} voted") ||
+                  "discuss — then vote"}
+              </span>
             </div>
           </div>
           <div class="font-log text-[10px] uppercase tracking-[0.3em] text-slate-500">
-            {(@phase == :meeting && "discuss — then vote") || "cast your votes"}
+            {(@phase == :meeting && "discussion — keep your alibi straight") || "cast your votes"}
           </div>
         </div>
 
@@ -691,7 +840,7 @@
         </div>
       </main>
 
-      <aside class="w-80 lg:w-96 flex flex-col border-l border-slate-800/80 bg-gradient-to-b from-[#0a0f1e]/90 to-[#070b16]/90 min-h-0">
+      <aside class="w-80 lg:w-96 flex flex-col border-l-2 border-[#1c2b33] bg-gradient-to-b from-[#141f26]/95 to-[#0d151b]/95 min-h-0">
         <% player = @players[@selected_agent] %>
         <div
           :if={player}

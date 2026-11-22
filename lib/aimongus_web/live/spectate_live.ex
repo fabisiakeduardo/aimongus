@@ -84,6 +84,8 @@ defmodule AimongusWeb.SpectateLive do
         minds: %{},
         selected_agent: nil,
         winner: nil,
+        sabotage: nil,
+        moving: MapSet.new(),
         # starts muted: browsers block audio before the first user
         # gesture, so the header toggle doubles as the unlock click
         muted: true,
@@ -268,7 +270,9 @@ defmodule AimongusWeb.SpectateLive do
         speaking: nil,
         votes: %{},
         minds: %{},
-        winner: nil
+        winner: nil,
+        sabotage: nil,
+        moving: MapSet.new()
       )
       |> resync_or(fn socket ->
         assign(socket, running?: true, phase: :free_roam)
@@ -293,8 +297,46 @@ defmodule AimongusWeb.SpectateLive do
         # isn't, so upsert a bare pawn from the event itself
         resync_or(socket, fn socket -> upsert_replay_player(socket, id, nil, pos) end)
       end
+      |> mark_moving(id)
 
     {:noreply, socket}
+  end
+
+  def handle_info({:still, id}, socket) do
+    {:noreply, assign(socket, moving: MapSet.delete(socket.assigns.moving, id))}
+  end
+
+  def handle_info({:sabotaged, kind, saboteur_id, ends_in_seconds}, socket) do
+    name = player_name(socket.assigns.players, saboteur_id)
+    label = if kind == :reactor, do: "REACTOR MELTDOWN", else: "the lights"
+
+    socket =
+      socket
+      |> assign(sabotage: %{kind: kind, by: saboteur_id, ends_in_seconds: ends_in_seconds})
+      |> feed(:system, "⚠ #{name} sabotaged #{label}!")
+      |> sound("siren")
+
+    {:noreply, socket}
+  end
+
+  def handle_info({:sabotage_fixed, kind, fixer_ids}, socket) do
+    names =
+      fixer_ids
+      |> Enum.map(&player_name(socket.assigns.players, &1))
+      |> Enum.join(", ")
+
+    label = if kind == :reactor, do: "reactor meltdown", else: "lights"
+
+    socket =
+      socket
+      |> assign(sabotage: nil)
+      |> feed(:system, "#{names} fixed the #{label} sabotage")
+
+    {:noreply, socket}
+  end
+
+  def handle_info({:meltdown, _kind}, socket) do
+    {:noreply, feed(socket, :system, "REACTOR MELTDOWN — the impostors win")}
   end
 
   def handle_info({:task_progress, id, task_id, pct}, socket) do
@@ -517,7 +559,9 @@ defmodule AimongusWeb.SpectateLive do
           minds: %{},
           selected_agent: nil,
           winner: nil,
-          ejected_ids: MapSet.new()
+          ejected_ids: MapSet.new(),
+          sabotage: nil,
+          moving: MapSet.new()
         )
 
       state ->
@@ -542,7 +586,8 @@ defmodule AimongusWeb.SpectateLive do
           working: %{},
           selected_agent: if(Map.has_key?(state.players, selected), do: selected),
           winner: state.winner,
-          ejected_ids: ejected
+          ejected_ids: ejected,
+          sabotage: state.sabotage
         )
     end
   end
@@ -743,8 +788,57 @@ defmodule AimongusWeb.SpectateLive do
       edges: room_edge_paths(map),
       shadows: floor_shadows(map),
       sills: door_sills(map),
-      doors: door_tiles(map)
+      doors: door_tiles(map),
+      props: room_props(map)
     }
+  end
+
+  # Furniture, in tile coords — pure decoration placed on walkable room
+  # cells that aren't task spots, the button, or the cells beside a door.
+  # Positions are per-room recipes inside each room's bounding box.
+  @room_props %{
+    "Cafeteria" => [
+      {:table, 0.22, 0.3},
+      {:table, 0.5, 0.62},
+      {:table, 0.78, 0.3}
+    ],
+    "Reactor" => [{:rods, 0.3, 0.4}, {:rods, 0.7, 0.4}],
+    "MedBay" => [{:bed, 0.5, 0.35}],
+    "Weapons" => [{:console, 0.5, 0.3}],
+    "Navigation" => [{:helm, 0.5, 0.45}],
+    "O2" => [{:plant, 0.28, 0.4}, {:plant, 0.72, 0.4}],
+    "Electrical" => [{:panel, 0.5, 0.15}],
+    "Storage" => [{:crate, 0.25, 0.6}, {:crate, 0.5, 0.3}, {:crate, 0.75, 0.6}],
+    "Admin" => [{:admin_table, 0.5, 0.45}],
+    "Shields" => [{:console, 0.5, 0.5}]
+  }
+
+  defp room_props(map) do
+    busy =
+      map.tasks
+      |> Map.values()
+      |> MapSet.new()
+      |> then(fn set -> if map.button, do: MapSet.put(set, map.button), else: set end)
+
+    Enum.flat_map(map.rooms, fn {name, positions} ->
+      cells = MapSet.new(positions)
+      {{min_x, min_y}, {max_x, max_y}} = bbox(positions)
+      w = max_x - min_x + 1
+      h = max_y - min_y + 1
+
+      for {kind, fx, fy} <- Map.get(@room_props, name, []),
+          {x, y} = {min_x + floor(fx * w), min_y + floor(fy * h)},
+          MapSet.member?(cells, {x, y}),
+          not MapSet.member?(busy, {x, y}) do
+        %{kind: kind, x: x, y: y}
+      end
+    end)
+  end
+
+  defp bbox(positions) do
+    xs = Enum.map(positions, &elem(&1, 0))
+    ys = Enum.map(positions, &elem(&1, 1))
+    {{Enum.min(xs), Enum.min(ys)}, {Enum.max(xs), Enum.max(ys)}}
   end
 
   # One SVG path per room tracing every boundary segment where the room
@@ -844,25 +938,27 @@ defmodule AimongusWeb.SpectateLive do
 
     case tile_kind(map, pos) do
       :wall ->
-        "#060a13"
+        # hull plating — flat cartoon walls, dark blue-grey against space
+        if alt?, do: "#141c2e", else: "#101828"
 
       :corridor ->
         cond do
-          MapSet.member?(doors, pos) -> "#1b2340"
-          alt? -> "#151d30"
-          true -> "#121a2b"
+          MapSet.member?(doors, pos) -> "#4a5a6f"
+          alt? -> "#39445a"
+          true -> "#333e52"
         end
 
       {:room, name} ->
         hue = Map.get(hues, name, 215)
-        if alt?, do: "hsl(#{hue}, 45%, 16%)", else: "hsl(#{hue}, 45%, 13%)"
+        if alt?, do: "hsl(#{hue}, 24%, 34%)", else: "hsl(#{hue}, 24%, 31%)"
     end
   end
 
   @doc false
-  # Neon edge color for a room's perimeter path.
+  # Room perimeter color — a mid-tone tint of the room's hue that reads
+  # as a cartoon outline against both floor and wall.
   def room_edge_color(hues, name) do
-    "hsl(#{Map.get(hues, name, 215)}, 90%, 62%)"
+    "hsl(#{Map.get(hues, name, 215)}, 55%, 52%)"
   end
 
   @doc false
@@ -888,13 +984,66 @@ defmodule AimongusWeb.SpectateLive do
   def alive_count(players), do: Enum.count(players, fn {_id, p} -> p.alive? end)
 
   @doc false
-  # Living players in pawn render order — seats around the meeting table.
-  def alive_players(players) do
-    for {id, p} <- sorted_players(players), p.alive?, do: {id, p}
+  # Vote-tablet row label for a cast vote — god view, so spectators see
+  # both the choice and who made it.
+  def vote_label(:skip, _players), do: "skipped"
+  def vote_label(id, players), do: "→ #{player_name(players, id)}"
+
+  @doc false
+  def lights_out?(sabotage), do: match?(%{kind: :lights}, sabotage)
+
+  @doc false
+  # Tile → CSS translate for a pawn, including the anti-overlap ring
+  # offset when several living beans share a cell.
+  def pawn_translate(players, id, cell) do
+    {ox, oy} = crowd_offset(players, id)
+    {x, y} = players[id].pos
+    "translate(#{fmt_px(x * cell + ox)}px, #{fmt_px(y * cell + oy)}px)"
+  end
+
+  defp fmt_px(v) when is_integer(v), do: v
+  defp fmt_px(v) when is_float(v) and v == trunc(v), do: trunc(v)
+  defp fmt_px(v), do: Float.round(v, 1)
+
+  @doc false
+  # Beans never stack on one tile: living pawns sharing a cell spread
+  # onto a small ring, ordered by id so the layout is stable and
+  # LiveView diffs don't juggle them.
+  def crowd_offset(players, id) do
+    case players[id] do
+      %{alive?: true, pos: pos} ->
+        crowd =
+          for {pid, p} <- players,
+              p.alive?,
+              p.pos == pos,
+              do: pid
+
+        case Enum.sort(crowd) do
+          [_only] ->
+            {0.0, 0.0}
+
+          ids ->
+            idx = Enum.find_index(ids, &(&1 == id)) || 0
+            count = length(ids)
+            angle = 2 * :math.pi() * idx / count - :math.pi() / 2
+            radius = min(7.0, 3.0 + count)
+            {Float.round(radius * :math.cos(angle), 1), Float.round(radius * :math.sin(angle), 1)}
+        end
+
+      _dead_or_missing ->
+        {0.0, 0.0}
+    end
   end
 
   @doc false
   def feed_class(entry), do: "feed-item feed-#{entry.kind}"
+
+  # A pawn counts as "moving" for ~350ms after its last step so the
+  # waddle animation plays while it travels and idles when it stops.
+  defp mark_moving(socket, id) do
+    Process.send_after(self(), {:still, id}, 350)
+    assign(socket, moving: MapSet.put(socket.assigns.moving, id))
+  end
 
   @doc false
   # Mind panel rows for a player's personality card: one per trait, in
@@ -961,15 +1110,6 @@ defmodule AimongusWeb.SpectateLive do
       :voting -> {"Vote now", "voting"}
       _other -> {"Emergency meeting", ""}
     end
-  end
-
-  @doc false
-  # Chips around the meeting table: absolute-positioned on an ellipse.
-  def seat_style(index, count) do
-    angle = 2 * :math.pi() * index / max(count, 1) - :math.pi() / 2
-    left = 50 + 46 * :math.cos(angle)
-    top = 50 + 46 * :math.sin(angle)
-    "left: #{Float.round(left, 2)}%; top: #{Float.round(top, 2)}%"
   end
 
   @doc false
@@ -1111,5 +1251,334 @@ defmodule AimongusWeb.SpectateLive do
       cy = sy / count * @cell + @cell / 2
       %{name: name, x: Float.round(cx, 1), y: Float.round(cy, 1)}
     end
+  end
+
+  # --- Room furniture ---------------------------------------------------
+  #
+  # Original prop art, drawn in the tile's coordinate space (one tile is
+  # `@cell` px — `s` helpers scale fractions). Muted ship-metal palette
+  # with the same dark cartoon outline the pawns carry.
+
+  defp s(assigns, frac), do: Float.round(frac * assigns.cell, 1)
+
+  def prop_art(%{kind: :table} = assigns) do
+    ~H"""
+    <g>
+      <circle
+        cx={s(assigns, 0.5)}
+        cy={s(assigns, 0.5)}
+        r={s(assigns, 0.34)}
+        fill="#3e4c5e"
+        stroke="#101823"
+        stroke-width="1"
+      />
+      <circle cx={s(assigns, 0.5)} cy={s(assigns, 0.5)} r={s(assigns, 0.19)} fill="#54677d" />
+    </g>
+    """
+  end
+
+  def prop_art(%{kind: :admin_table} = assigns) do
+    ~H"""
+    <g>
+      <rect
+        x={s(assigns, 0.12)}
+        y={s(assigns, 0.26)}
+        width={s(assigns, 0.76)}
+        height={s(assigns, 0.48)}
+        rx={s(assigns, 0.1)}
+        fill="#2f5d4a"
+        stroke="#101823"
+        stroke-width="1"
+      />
+      <rect
+        x={s(assigns, 0.22)}
+        y={s(assigns, 0.35)}
+        width={s(assigns, 0.56)}
+        height={s(assigns, 0.2)}
+        rx={s(assigns, 0.05)}
+        fill="#67e8f9"
+        opacity="0.5"
+      />
+      <rect
+        x={s(assigns, 0.4)}
+        y={s(assigns, 0.08)}
+        width={s(assigns, 0.2)}
+        height={s(assigns, 0.12)}
+        rx={s(assigns, 0.04)}
+        fill="#3e4c5e"
+        stroke="#101823"
+        stroke-width="0.8"
+      />
+    </g>
+    """
+  end
+
+  def prop_art(%{kind: :console} = assigns) do
+    ~H"""
+    <g>
+      <rect
+        x={s(assigns, 0.14)}
+        y={s(assigns, 0.3)}
+        width={s(assigns, 0.72)}
+        height={s(assigns, 0.5)}
+        rx={s(assigns, 0.08)}
+        fill="#3b4a5e"
+        stroke="#101823"
+        stroke-width="1"
+      />
+      <rect
+        x={s(assigns, 0.22)}
+        y={s(assigns, 0.38)}
+        width={s(assigns, 0.56)}
+        height={s(assigns, 0.2)}
+        rx={s(assigns, 0.04)}
+        fill="#67e8f9"
+        opacity="0.75"
+      />
+      <circle cx={s(assigns, 0.3)} cy={s(assigns, 0.68)} r={s(assigns, 0.035)} fill="#f87171" />
+      <circle cx={s(assigns, 0.42)} cy={s(assigns, 0.68)} r={s(assigns, 0.035)} fill="#facc15" />
+      <circle cx={s(assigns, 0.54)} cy={s(assigns, 0.68)} r={s(assigns, 0.035)} fill="#4ade80" />
+    </g>
+    """
+  end
+
+  def prop_art(%{kind: :helm} = assigns) do
+    ~H"""
+    <g>
+      <rect
+        x={s(assigns, 0.16)}
+        y={s(assigns, 0.18)}
+        width={s(assigns, 0.68)}
+        height={s(assigns, 0.34)}
+        rx={s(assigns, 0.09)}
+        fill="#3b4a5e"
+        stroke="#101823"
+        stroke-width="1"
+      />
+      <rect
+        x={s(assigns, 0.24)}
+        y={s(assigns, 0.25)}
+        width={s(assigns, 0.52)}
+        height={s(assigns, 0.14)}
+        rx={s(assigns, 0.03)}
+        fill="#a5f3fc"
+        opacity="0.85"
+      />
+      <circle
+        cx={s(assigns, 0.5)}
+        cy={s(assigns, 0.7)}
+        r={s(assigns, 0.17)}
+        fill="#54677d"
+        stroke="#101823"
+        stroke-width="1"
+      />
+    </g>
+    """
+  end
+
+  def prop_art(%{kind: :rods} = assigns) do
+    ~H"""
+    <g>
+      <rect
+        x={s(assigns, 0.18)}
+        y={s(assigns, 0.12)}
+        width={s(assigns, 0.2)}
+        height={s(assigns, 0.74)}
+        rx={s(assigns, 0.09)}
+        fill="#31445f"
+        stroke="#101823"
+        stroke-width="1"
+      />
+      <rect
+        x={s(assigns, 0.62)}
+        y={s(assigns, 0.12)}
+        width={s(assigns, 0.2)}
+        height={s(assigns, 0.74)}
+        rx={s(assigns, 0.09)}
+        fill="#31445f"
+        stroke="#101823"
+        stroke-width="1"
+      />
+      <rect
+        x={s(assigns, 0.245)}
+        y={s(assigns, 0.2)}
+        width={s(assigns, 0.07)}
+        height={s(assigns, 0.58)}
+        fill="#f472b6"
+        opacity="0.8"
+      />
+      <rect
+        x={s(assigns, 0.685)}
+        y={s(assigns, 0.2)}
+        width={s(assigns, 0.07)}
+        height={s(assigns, 0.58)}
+        fill="#f472b6"
+        opacity="0.8"
+      />
+    </g>
+    """
+  end
+
+  def prop_art(%{kind: :bed} = assigns) do
+    ~H"""
+    <g>
+      <rect
+        x={s(assigns, 0.1)}
+        y={s(assigns, 0.3)}
+        width={s(assigns, 0.8)}
+        height={s(assigns, 0.42)}
+        rx={s(assigns, 0.08)}
+        fill="#66808f"
+        stroke="#101823"
+        stroke-width="1"
+      />
+      <rect
+        x={s(assigns, 0.16)}
+        y={s(assigns, 0.36)}
+        width={s(assigns, 0.2)}
+        height={s(assigns, 0.3)}
+        rx={s(assigns, 0.05)}
+        fill="#dbe7f0"
+      />
+      <rect
+        x={s(assigns, 0.44)}
+        y={s(assigns, 0.38)}
+        width={s(assigns, 0.4)}
+        height={s(assigns, 0.26)}
+        rx={s(assigns, 0.04)}
+        fill="#5a7184"
+      />
+    </g>
+    """
+  end
+
+  def prop_art(%{kind: :crate} = assigns) do
+    ~H"""
+    <g>
+      <rect
+        x={s(assigns, 0.16)}
+        y={s(assigns, 0.26)}
+        width={s(assigns, 0.68)}
+        height={s(assigns, 0.58)}
+        rx={s(assigns, 0.05)}
+        fill="#7d6a4a"
+        stroke="#101823"
+        stroke-width="1"
+      />
+      <line
+        x1={s(assigns, 0.16)}
+        y1={s(assigns, 0.55)}
+        x2={s(assigns, 0.84)}
+        y2={s(assigns, 0.55)}
+        stroke="#101823"
+        stroke-width="1"
+        opacity="0.5"
+      />
+      <line
+        x1={s(assigns, 0.5)}
+        y1={s(assigns, 0.26)}
+        x2={s(assigns, 0.5)}
+        y2={s(assigns, 0.84)}
+        stroke="#101823"
+        stroke-width="1"
+        opacity="0.5"
+      />
+    </g>
+    """
+  end
+
+  def prop_art(%{kind: :plant} = assigns) do
+    ~H"""
+    <g>
+      <ellipse
+        cx={s(assigns, 0.5)}
+        cy={s(assigns, 0.34)}
+        rx={s(assigns, 0.3)}
+        ry={s(assigns, 0.26)}
+        fill="#3f7a4c"
+        stroke="#101823"
+        stroke-width="1"
+      />
+      <ellipse
+        cx={s(assigns, 0.38)}
+        cy={s(assigns, 0.28)}
+        rx={s(assigns, 0.12)}
+        ry={s(assigns, 0.09)}
+        fill="#58a566"
+      />
+      <rect
+        x={s(assigns, 0.34)}
+        y={s(assigns, 0.52)}
+        width={s(assigns, 0.32)}
+        height={s(assigns, 0.3)}
+        rx={s(assigns, 0.05)}
+        fill="#6b4f3a"
+        stroke="#101823"
+        stroke-width="1"
+      />
+    </g>
+    """
+  end
+
+  def prop_art(%{kind: :panel} = assigns) do
+    ~H"""
+    <g>
+      <rect
+        x={s(assigns, 0.1)}
+        y={s(assigns, 0.06)}
+        width={s(assigns, 0.8)}
+        height={s(assigns, 0.5)}
+        rx={s(assigns, 0.06)}
+        fill="#43403a"
+        stroke="#101823"
+        stroke-width="1"
+      />
+      <rect
+        x={s(assigns, 0.18)}
+        y={s(assigns, 0.14)}
+        width={s(assigns, 0.14)}
+        height={s(assigns, 0.14)}
+        fill="#facc15"
+      />
+      <rect
+        x={s(assigns, 0.38)}
+        y={s(assigns, 0.14)}
+        width={s(assigns, 0.14)}
+        height={s(assigns, 0.14)}
+        fill="#4ade80"
+      />
+      <rect
+        x={s(assigns, 0.58)}
+        y={s(assigns, 0.14)}
+        width={s(assigns, 0.14)}
+        height={s(assigns, 0.14)}
+        fill="#f87171"
+      />
+      <line
+        x1={s(assigns, 0.18)}
+        y1={s(assigns, 0.4)}
+        x2={s(assigns, 0.82)}
+        y2={s(assigns, 0.4)}
+        stroke="#67e8f9"
+        stroke-width="1.4"
+        opacity="0.7"
+      />
+    </g>
+    """
+  end
+
+  def prop_art(assigns) do
+    ~H"""
+    <rect
+      x={s(assigns, 0.2)}
+      y={s(assigns, 0.2)}
+      width={s(assigns, 0.6)}
+      height={s(assigns, 0.6)}
+      rx={s(assigns, 0.08)}
+      fill="#3e4c5e"
+      stroke="#101823"
+      stroke-width="1"
+    />
+    """
   end
 end
