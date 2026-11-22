@@ -1,0 +1,39 @@
+##############################################
+#RRRRRR#####MMMMMM####CCCCCCCCCCC#####WWWWWWW#
+#RRRRRR#####MMMMMM####CCCCCCCCCCC#####WWWWWWW#
+#RRRRRR#####MT2MMM####CT10CBCCCCC#####WT3WWWW#
+#RRRRRR#####MMMMMM####CCCCCCCCCCC#####WWWWWWW#
+#RT1RRR#####MMMMMM####CCCCCCCCCCC#####WWWWWWW#
+#RRRRRR#######..##########..#############..###
+#RRRRRR......................................#
+#RRRRRR......................................#
+#RRRRRR###..########.......###################
+#RRRRRR###..########.......#OOOOOO####NNNNNNN#
+##########..########.......#OOOOOO####NNNNNNN#
+##########..########........OOT5OO####NNNT4NN#
+##########..########........OOOOOO####NNNNNNN#
+##########..########.......#OOOOOO####NNNNNNN#
+##########..########.......###..#########..###
+##########...................................#
+##########...................................#
+##########..######....#######..#########...###
+#EEEEEEEE#..######....#######..#######HHHHHHH#
+#EEEEEEEE#..######....#####AAAAAAA####HHHHHHH#
+#EEEEEEEE#..#GGGGGGGGGGGG##AAAAAAA####HHHHHHH#
+#EEEEEEEE...#GGGGGGGGGGGG##AAT8AAA####HHHHHHH#
+#EET6EEEE....GGGGGGGGGGGG##AAAAAAA####HHT9HHH#
+#EEEEEEEE#...GGT7GGGGGGGG##AAAAAAA####HHHHHHH#
+#EEEEEEEE####GGGGGGGGGGGG##AAAAAAA####HHHHHHH#
+#EEEEEEEE####GGGGGGGGGGGG#############HHHHHHH#
+##############################################
+
+R: Reactor
+M: MedBay
+C: Cafeteria
+W: Weapons
+N: Navigation
+O: O2
+E: Electrical
+G: Storage
+A: Admin
+H: Shields
