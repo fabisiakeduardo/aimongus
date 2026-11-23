@@ -85,6 +85,17 @@ defmodule Aimongus.LLM.Stub do
           intent: %{type: "report"}
         })
 
+      # A killer lingering on their own victim's corpse is the most
+      # suspicious thing possible — walk away and pretend it never
+      # happened. Anyone else's body gets reported above instead.
+      String.contains?(prompt, "Bodies in sight:") and killer?(prompt) ->
+        room = flee_room(prompt)
+
+        Jason.encode!(%{
+          reasoning: "walking away from the body before anyone connects me to it",
+          intent: %{type: "move_to", target: room}
+        })
+
       String.contains?(prompt, ~s|"type": "kill"|) and
           lone_target?(prompt) ->
         [_, target] = Regex.run(~r/- [^\n]+ \(id "([^"]+)"\)/, prompt)
@@ -133,12 +144,17 @@ defmodule Aimongus.LLM.Stub do
         [_, killer, victim] = match
         "I SAW #{killer} kill #{victim} with my own eyes — vote #{killer}!"
 
+      # Under fire: crew gives their REAL alibi and asks who can vouch;
+      # a killer fabricates one — claims a room nowhere near the scene
+      # and deflects suspicion onto someone else entirely.
       accused?(prompt, me) ->
-        Enum.random([
-          "That wasn't me — check the alibis before you throw a crewmate out the airlock.",
-          "Wrong bean. I was doing tasks — who actually SAW anything?",
-          "You want to eject me on a hunch? Ask the witness what they really saw."
-        ])
+        defense_line(prompt, me)
+
+      # Somebody just claimed an alibi — check my own sightings. If I
+      # actually saw them there, back them up; that's how tables clear
+      # innocent players instead of ejecting on vibes.
+      line = corroboration(prompt, me) ->
+        line
 
       match = Regex.run(~r/vote ([A-Z][a-z]+)/, prompt) ->
         [_, accused] = match
@@ -271,6 +287,105 @@ defmodule Aimongus.LLM.Stub do
     Regex.match?(~r/alibi|where were you|name your room|where was it/i, text)
   end
 
+  # Accused at the table. Crew answers truthfully — real room, and a
+  # name-drop of whoever actually crossed their path so the table can
+  # vouch. A killer fabricates: claims a room away from the scene and
+  # deflects the heat onto someone else. A fabricated alibi is exactly
+  # what `corroboration/2` is there to catch.
+  defp defense_line(prompt, me) do
+    if killer?(prompt) do
+      scapegoat = scapegoat(prompt, me)
+      scene = body_room(prompt) || "Cafeteria"
+      room = Enum.random(@demo_rooms -- [scene])
+
+      Enum.random([
+        "I was at #{room} on tasks — nowhere near the scene. #{scapegoat} though? #{scapegoat} has been a ghost all game.",
+        "Not me. I was at #{room}. You want someone to look at — #{scapegoat} hasn't crossed a single room with anyone.",
+        "#{accuser_of(prompt, me)} is pointing at me awfully fast after a body drops. I was at #{room} — keep an eye on #{scapegoat}."
+      ])
+    else
+      case vouch(prompt, me) do
+        {ally, room} ->
+          Enum.random([
+            "I was at #{room} — #{ally} was right there with me, ask them.",
+            "Not me — #{ally} saw me at #{room} not long ago. Check with them."
+          ])
+
+        nil ->
+          Enum.random([
+            "That wasn't me — I was at #{my_room(prompt)} on tasks. Check the sightings before you eject a crewmate.",
+            "Wrong bean. I was at #{my_room(prompt)} — nobody around, but I had nothing to do with that body.",
+            "You want to eject me on a hunch? I was at #{my_room(prompt)} doing tasks the whole time."
+          ])
+      end
+    end
+  end
+
+  # Reads the last line said at the table: if it's an alibi claim, compare
+  # the claimed room against MY OWN sightings of that player. Match →
+  # vouch for them (clears an innocent). Mismatch → call the lie out
+  # loud; that's how a fabricated killer alibi gets torn down mid-meeting.
+  defp corroboration(prompt, me) do
+    with {who, text} <- last_speech(prompt),
+         true <- who != me,
+         [_, claimed] <- Regex.run(~r/(?:was at|working in|been in|on tasks at) (#{room_alt()})\b/i, text),
+         seen when not is_nil(seen) <- last_seen_room(prompt, who) do
+      if String.trim(claimed) == seen do
+        Enum.random([
+          "That checks out — I saw #{who} at #{seen} too. Alibi holds.",
+          "#{who}'s telling the truth, I crossed paths with them at #{seen}."
+        ])
+      else
+        Enum.random([
+          "That's a lie — I saw #{who} at #{seen}, not #{claimed}.",
+          "#{who} says #{claimed} but I literally saw them at #{seen}. Careful."
+        ])
+      end
+    else
+      _ -> nil
+    end
+  end
+
+  defp room_alt do
+    (@demo_rooms ++ ["Upper Engine", "Lower Engine", "Security", "Communications"])
+    |> Enum.map(&Regex.escape/1)
+    |> Enum.join("|")
+  end
+
+  defp last_seen_room(prompt, who) do
+    case Regex.run(~r/- #{safe(who)}: at (.+?), \d+ ticks ago/, prompt) do
+      [_, room] -> String.trim(room)
+      _ -> nil
+    end
+  end
+
+  # Whoever I saw at MY room can vouch for my alibi.
+  defp vouch(prompt, me) do
+    case my_room(prompt) do
+      "somewhere" ->
+        nil
+
+      room ->
+        ~r/- ([A-Z][a-z]+): at #{Regex.escape(room)}, \d+ ticks ago/
+        |> Regex.scan(prompt)
+        |> Enum.map(&List.last/1)
+        |> Enum.reject(&(&1 == me))
+        |> case do
+          [] -> nil
+          [ally | _] -> {ally, room}
+        end
+    end
+  end
+
+  # A killer under fire redirects the table: pick whoever already looks
+  # off (never-seen, seen near the scene) — else bite the accuser back.
+  defp scapegoat(prompt, me) do
+    case my_suspect(prompt) do
+      "someone" -> accuser_of(prompt, me)
+      suspect -> suspect
+    end
+  end
+
   defp question?(text), do: String.ends_with?(String.trim(text), "?")
 
   defp accuser_of(prompt, accused) do
@@ -299,11 +414,25 @@ defmodule Aimongus.LLM.Stub do
         _ -> nil
       end
 
+    lies = Regex.scan(~r/lie — I saw ([A-Z][a-z]+)/, prompt)
+    votes = Regex.scan(~r/vote ([A-Z][a-z]+)/, prompt)
+
     accused =
       cond do
-        match = Regex.run(~r/I SAW ([A-Z][a-z]+) kill/, prompt) -> List.last(match)
-        match = Regex.run(~r/vote ([A-Z][a-z]+)/, prompt) -> List.last(match)
-        true -> nil
+        match = Regex.run(~r/I SAW ([A-Z][a-z]+) kill/, prompt) ->
+          List.last(match)
+
+        # A called-out lie is damning — pile onto whoever fabricated
+        # an alibi the table could disprove.
+        lies != [] ->
+          lies |> List.last() |> List.last()
+
+        # Momentum: follow the most recent vote call, not the first.
+        votes != [] ->
+          votes |> List.last() |> List.last()
+
+        true ->
+          nil
       end
 
     candidates =
@@ -357,6 +486,14 @@ defmodule Aimongus.LLM.Stub do
     |> Enum.sort_by(&:erlang.phash2({id, &1}))
     |> Enum.take(4)
     |> Enum.random()
+  end
+
+  # Anywhere but here — a killer leaves the room the body is in.
+  defp flee_room(prompt) do
+    case Regex.run(~r/You are at ([A-Za-z]+)/, prompt) do
+      [_, here] -> Enum.random(@demo_rooms -- [here])
+      _ -> Enum.random(@demo_rooms)
+    end
   end
 
   # A kill is only worth it on an isolated target: with a second pawn in
