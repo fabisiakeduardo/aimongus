@@ -1649,8 +1649,13 @@ defmodule Aimongus.Game.Server do
   # Public meeting transcript — every living player hears the whole
   # discussion, so history is shared; `your_turn?` and `candidates` are
   # the only per-player bits.
-  defp meeting_view(%{state: %{phase: :meeting}, meeting: %{} = meeting}, player_id) do
-    %{history: meeting.history, round: meeting.round, your_turn?: meeting.current == player_id}
+  defp meeting_view(%{state: %{phase: :meeting}, meeting: %{} = meeting} = server, player_id) do
+    %{
+      history: meeting.history,
+      round: meeting.round,
+      your_turn?: meeting.current == player_id,
+      reason: meeting_reason_view(meeting, server.state)
+    }
   end
 
   defp meeting_view(%{state: %{phase: :voting} = state, meeting: %{} = meeting}, _id) do
@@ -1660,8 +1665,22 @@ defmodule Aimongus.Game.Server do
       |> Enum.map(&%{id: &1.id, name: &1.name})
       |> Enum.sort_by(& &1.id)
 
-    %{history: meeting.history, round: meeting.round, candidates: candidates}
+    %{
+      history: meeting.history,
+      round: meeting.round,
+      candidates: candidates,
+      reason: meeting_reason_view(meeting, state)
+    }
   end
+
+  # Who called the meeting and how — public knowledge, just like at the
+  # real table: everyone sees who slammed the button or found the body.
+  defp meeting_reason_view(%{reason: {kind, id}}, state)
+       when kind in [:report, :button] do
+    %{kind: kind, by: %{id: id, name: get_in(state.players, [id, Access.key(:name)]) || id}}
+  end
+
+  defp meeting_reason_view(_meeting, _state), do: nil
 
   defp meeting_view(_server, _player_id), do: nil
 

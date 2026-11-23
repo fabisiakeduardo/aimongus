@@ -421,6 +421,7 @@ defmodule Aimongus.LLM.Prompt do
 
     [
       header,
+      reason_line(meeting),
       history_lines(meeting),
       turn_line(view, meeting, phase),
       candidates_line(meeting, phase)
@@ -432,6 +433,14 @@ defmodule Aimongus.LLM.Prompt do
 
   defp round_str(%{round: round}), do: " — round #{round}"
   defp round_str(_meeting), do: ""
+
+  defp reason_line(%{reason: %{kind: :report, by: %{name: name, id: id}}}),
+    do: "#{name} (id \"#{id}\") called this meeting — they reported a body."
+
+  defp reason_line(%{reason: %{kind: :button, by: %{name: name, id: id}}}),
+    do: "#{name} (id \"#{id}\") called this meeting — they pressed the emergency button."
+
+  defp reason_line(_meeting), do: nil
 
   defp history_lines(%{history: history}) when is_list(history) and history != [] do
     ["Said so far (claims, not facts):"] ++

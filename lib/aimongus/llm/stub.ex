@@ -76,8 +76,10 @@ defmodule Aimongus.LLM.Stub do
         })
 
       # Killers walk away from bodies — a self-report three seconds
-      # after the murder reads as scripted. Crew reports what it finds.
-      String.contains?(prompt, "Bodies in sight:") and not killer?(prompt) ->
+      # after the murder reads as scripted. Ghosts see everything but
+      # can't call meetings. Living crew reports what it finds.
+      String.contains?(prompt, "Bodies in sight:") and not killer?(prompt) and
+          not String.contains?(prompt, "You are DEAD") ->
         Jason.encode!(%{
           reasoning: "spotted a body — calling a meeting immediately",
           intent: %{type: "report"}
@@ -118,6 +120,12 @@ defmodule Aimongus.LLM.Stub do
     me = self_name(prompt)
 
     cond do
+      Regex.match?(~r/#{safe(me)} \(id "[^"]+"\) called this meeting — they reported a body/, prompt) ->
+        "I found the body — that's why I called this meeting. Who was near the scene?"
+
+      Regex.match?(~r/#{safe(me)} \(id "[^"]+"\) called this meeting — they pressed/, prompt) ->
+        "I pressed the button — something felt very wrong out there."
+
       match = Regex.run(~r/I SAW ([A-Z][a-z]+) kill ([A-Z][a-z]+)/, prompt) ->
         [_, killer, victim] = match
         "I SAW #{killer} kill #{victim} with my own eyes — vote #{killer}!"
@@ -139,7 +147,7 @@ defmodule Aimongus.LLM.Stub do
 
       true ->
         Enum.random([
-          "Who reported the body? Where was it found — and who was nearby?",
+          "Where was the body found — and who was seen near it?",
           "I want alibis: everyone name your room when the alarm went off.",
           "Someone is lying in this room. Say where you were.",
           "Too quiet in here. Anyone willing to vouch for their room?"
@@ -185,6 +193,9 @@ defmodule Aimongus.LLM.Stub do
       _ -> nil
     end
   end
+
+  defp safe(nil), do: "N0MATCH"
+  defp safe(name), do: Regex.escape(name)
 
   defp accused?(_prompt, nil), do: false
 
