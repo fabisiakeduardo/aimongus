@@ -142,12 +142,40 @@ defmodule Aimongus.LLM.Stub do
 
       match = Regex.run(~r/vote ([A-Z][a-z]+)/, prompt) ->
         [_, accused] = match
+        accuser = accuser_of(prompt, accused)
 
         Enum.random([
-          "If #{accused} was seen at the body, that's enough for me — #{accused} goes.",
-          "Second that. #{accused} has been too quiet all match.",
-          "#{accused}? I can believe it — they were nowhere near their tasks."
+          "#{accuser} has a point — #{accused} was nowhere near their tasks.",
+          "Second that, #{accuser}. #{accused} has been too quiet all match.",
+          "Easy #{accuser} — ejecting #{accused} on a hunch is how impostors win.",
+          "#{accused}? If #{accuser} saw it, that's enough for me."
         ])
+
+      (last = last_speech(prompt)) && addressed_to_me?(last, me) ->
+        {who, _} = last
+        "#{who} — I was at #{my_room(prompt)}, doing tasks. Check the log if you don't believe me."
+
+      (last = last_speech(prompt)) && asks_alibi?(elem(last, 1)) ->
+        {who, _} = last
+
+        Enum.random([
+          "Fair question, #{who} — I was at #{my_room(prompt)}. What about you?",
+          "Answering #{who}: #{my_room(prompt)}, on tasks the whole time.",
+          "#{who} — #{my_room(prompt)}. And I'd like your alibi too."
+        ])
+
+      (last = last_speech(prompt)) && question?(elem(last, 1)) ->
+        {who, _} = last
+
+        Enum.random([
+          "#{who}, honest answer — I didn't see the body or the killer.",
+          "#{who}: I was on tasks at #{my_room(prompt)}, saw nothing suspicious.",
+          "Can't help you there, #{who} — my vision's been empty all match."
+        ])
+
+      last = last_speech(prompt) ->
+        {who, text} = last
+        "#{who} makes a fair point — but I still want to know who was alone near the body."
 
       true ->
         Enum.random([
@@ -156,6 +184,42 @@ defmodule Aimongus.LLM.Stub do
           "Someone is lying in this room. Say where you were.",
           "Too quiet in here. Anyone willing to vouch for their room?"
         ])
+    end
+  end
+
+  # The last line someone actually said in this meeting — conversation
+  # means answering THAT, not broadcasting into the void.
+  defp last_speech(prompt) do
+    ~r/- ([A-Z][a-z]+): "([^"]+)"/
+    |> Regex.scan(prompt)
+    |> List.last()
+    |> case do
+      [_, who, text] -> {who, text}
+      _ -> nil
+    end
+  end
+
+  defp addressed_to_me?({who, text}, me) do
+    me && who != me && String.contains?(text, me)
+  end
+
+  defp asks_alibi?(text) do
+    Regex.match?(~r/alibi|where were you|name your room|where was it/i, text)
+  end
+
+  defp question?(text), do: String.ends_with?(String.trim(text), "?")
+
+  defp accuser_of(prompt, accused) do
+    case Regex.run(~r/- ([A-Z][a-z]+): "[^"]*(?:vote|saw|sus)[^"]*#{Regex.escape(accused)}/i, prompt) do
+      [_, who] -> who
+      _ -> "They"
+    end
+  end
+
+  defp my_room(prompt) do
+    case Regex.run(~r/You are at ([A-Za-z]+)/, prompt) do
+      [_, room] -> room
+      _ -> "somewhere"
     end
   end
 
