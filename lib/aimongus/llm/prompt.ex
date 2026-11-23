@@ -238,6 +238,7 @@ defmodule Aimongus.LLM.Prompt do
       sabotage_line(view),
       visible_players_lines(view),
       visible_bodies_lines(view),
+      last_seen_lines(view),
       tasks_lines(view)
     ]
     |> List.flatten()
@@ -296,6 +297,29 @@ defmodule Aimongus.LLM.Prompt do
               if b[:reported?], do: " (already reported)", else: " — report it to call a meeting"
 
             "- #{name}'s body at #{place(b[:room])}#{pos_str(b[:pos])}#{hint}"
+          end)
+    end
+  end
+
+  # The observation ledger: everyone alive, and when/where this pawn
+  # last had eyes on them. "Never seen" is real evidence — a player
+  # nobody can place is the classic suspect.
+  defp last_seen_lines(view) do
+    case view[:last_seen] do
+      nil ->
+        nil
+
+      [] ->
+        nil
+
+      entries ->
+        ["LAST SEEN — your own sightings only:"] ++
+          Enum.map(entries, fn
+            %{name: name, room: nil} ->
+              "- #{name}: never seen this match"
+
+            %{name: name, room: room, ticks_ago: ticks} ->
+              "- #{name}: at #{place(room)}, #{ticks} ticks ago"
           end)
     end
   end

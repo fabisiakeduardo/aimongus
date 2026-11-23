@@ -153,6 +153,7 @@ defmodule Aimongus.LLM.Stub do
 
       (last = last_speech(prompt)) && addressed_to_me?(last, me) ->
         {who, _} = last
+
         "#{who} — I was at #{my_room(prompt)}, doing tasks. Check the log if you don't believe me."
 
       (last = last_speech(prompt)) && asks_alibi?(elem(last, 1)) ->
@@ -175,40 +176,79 @@ defmodule Aimongus.LLM.Stub do
 
       true ->
         suspect = my_suspect(prompt)
+        room = body_room(prompt)
 
-        Enum.random([
-          "#{suspect}, where exactly were you when the body dropped? Answer that first.",
-          "I've been watching #{suspect} — faking tasks, skipping rooms. I'm voting #{suspect}.",
-          "Still on #{suspect}. Nobody's seen them do a single task all match.",
-          "#{suspect} is way too comfortable in this meeting. Say your alibi, #{suspect}.",
-          "My vote's on #{suspect} — somebody here saw more than they're admitting."
-        ])
+        cond do
+          # Seen at the scene — that's evidence, cite it.
+          room && Regex.match?(~r/- #{safe(suspect)}: at #{Regex.escape(room)},/, prompt) ->
+            Enum.random([
+              "I saw #{suspect} at #{room} right where the body turned up — explain that.",
+              "#{suspect} was AT #{room} before the report. That's not a coincidence."
+            ])
+
+          # Never seen all match — pressure them for an alibi.
+          Regex.match?(~r/- #{safe(suspect)}: never seen/, prompt) ->
+            Enum.random([
+              "Nobody has seen #{suspect} all game — where HAVE you been, #{suspect}?",
+              "#{suspect} hasn't crossed anyone's path the whole match. Ghost work.",
+              "Say your alibi, #{suspect} — none of us can place you anywhere."
+            ])
+
+          true ->
+            Enum.random([
+              "#{suspect}, where exactly were you when the body dropped? Answer that first.",
+              "I've been watching #{suspect} — faking tasks, skipping rooms. I'm voting #{suspect}.",
+              "#{suspect} is way too comfortable in this meeting. Say your alibi, #{suspect}.",
+              "My vote's on #{suspect} — somebody here saw more than they're admitting."
+            ])
+        end
     end
   end
 
-  # Every agent carries its own suspect into the meeting — a stable pick
-  # hashed off its id, so the accusation survives across rounds instead
-  # of everyone humming "too quiet in here". Players have suspects.
+  # Suspicion grounded in the pawn's own LAST SEEN ledger — like a real
+  # player: who was seen near the body room, else who was never seen at
+  # all ("where have you been all game?"). Falls back to a stable pick
+  # so the accusation still holds across rounds.
   defp my_suspect(prompt) do
+    me = self_name(prompt)
+
+    never_seen =
+      ~r/- ([A-Z][a-z]+): never seen this match/
+      |> Regex.scan(prompt)
+      |> Enum.map(&List.last/1)
+      |> Enum.reject(&(&1 == me))
+
+    seen_near_body = seen_at_room(prompt, body_room(prompt), me)
+
     me_id =
       case Regex.run(~r/player id "([^"]+)"/, prompt) do
         [_, id] -> id
         _ -> ""
       end
 
-    me = self_name(prompt)
-
-    candidates =
-      ~r/(?:- |, |— )([A-Z][a-z]+)/
-      |> Regex.scan(prompt)
-      |> Enum.map(&List.last/1)
-      |> Enum.uniq()
-      |> Enum.reject(&(&1 == me or &1 in ~w(Said You Said The And But Your Yourself Secret Neutral Crew Impostor Sheriff Medic Vigilante Jester Serial Killer)))
-
-    case candidates do
-      [] -> "someone"
-      names -> Enum.min_by(names, &:erlang.phash2({me_id, &1}))
+    cond do
+      seen_near_body != [] -> Enum.random(seen_near_body)
+      never_seen != [] -> Enum.min_by(never_seen, &:erlang.phash2({me_id, &1}))
+      true -> "someone"
     end
+  end
+
+  # Where the reported body was — remembered as hard memory ("you
+  # found X's body at Room") or inferred from the meeting reason.
+  defp body_room(prompt) do
+    case Regex.run(~r/body at ([A-Za-z]+)/, prompt) do
+      [_, room] -> room
+      _ -> nil
+    end
+  end
+
+  defp seen_at_room(_prompt, nil, _me), do: []
+
+  defp seen_at_room(prompt, room, me) do
+    ~r/- ([A-Z][a-z]+): at #{Regex.escape(room)},/
+    |> Regex.scan(prompt)
+    |> Enum.map(&List.last/1)
+    |> Enum.reject(&(&1 == me))
   end
 
   # The last line someone actually said in this meeting — conversation
@@ -234,7 +274,10 @@ defmodule Aimongus.LLM.Stub do
   defp question?(text), do: String.ends_with?(String.trim(text), "?")
 
   defp accuser_of(prompt, accused) do
-    case Regex.run(~r/- ([A-Z][a-z]+): "[^"]*(?:vote|saw|sus)[^"]*#{Regex.escape(accused)}/i, prompt) do
+    case Regex.run(
+           ~r/- ([A-Z][a-z]+): "[^"]*(?:vote|saw|sus)[^"]*#{Regex.escape(accused)}/i,
+           prompt
+         ) do
       [_, who] -> who
       _ -> "They"
     end

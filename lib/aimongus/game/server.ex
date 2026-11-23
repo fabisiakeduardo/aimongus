@@ -1581,6 +1581,13 @@ defmodule Aimongus.Game.Server do
            # dealing (shuffle_roles: false) the list's order encodes
            # the whole role assignment
            role_mix: Enum.frequencies(state.config.roles),
+           # Public scoreboard — who is alive is table knowledge. Where
+           # they are is not.
+           roster:
+             state
+             |> State.alive_players()
+             |> Enum.map(&%{id: &1.id, name: &1.name})
+             |> Enum.sort_by(& &1.id),
            tasks: task_view(state, player),
            vigilante_shot_used?: player.vigilante_shot_used?,
            visible_players: visible_players(state, player),

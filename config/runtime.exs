@@ -29,7 +29,10 @@ case System.get_env("AIMONGUS_LLM") do
 
     config :aimongus, Aimongus.Match.Manager,
       speed: 2.0,
-      game_config: %{floor_gap_ms: 1_800},
+      # At 20 ticks/sec the default task_ticks (50) finishes a task in
+      # 2.5s — the crew would sweep the ship before an impostor can even
+      # cross it. Demo tasks take ~20s of channeling like the real game.
+      game_config: %{floor_gap_ms: 1_800, task_ticks: 400, tasks_per_player: 4},
       agent_opts: [poll_ms: 2_500, llm_opts: [respond: &Aimongus.LLM.Stub.demo_responder/1]]
 
   "devin" ->

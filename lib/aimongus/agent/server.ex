@@ -95,6 +95,7 @@ defmodule Aimongus.Agent.Server do
             task_supervisor: @task_supervisor,
             tick: nil,
             seen_bodies: MapSet.new(),
+            sightings: %{},
             speech_log: [],
             over?: false
 
@@ -276,6 +277,7 @@ defmodule Aimongus.Agent.Server do
     case fetch_view(state) do
       {:ok, view} ->
         state = %{state | tick: Map.get(view, :tick)}
+        state = note_sightings(state, view)
         state = note_new_bodies(state, view)
 
         if decidable?(view) do
@@ -318,6 +320,28 @@ defmodule Aimongus.Agent.Server do
   defp skip_reason(%{phase: :voting}), do: :dead
   defp skip_reason(%{phase: phase}), do: phase
 
+  # "Who was that, and where?" — the agent's own observation ledger.
+  # Kept outside the capped memory so a busy corridor can't flush a
+  # witnessed murder; rendered in the prompt as LAST SEEN so suspicion
+  # is grounded in what the pawn actually saw (or never saw).
+  defp note_sightings(state, view) do
+    sightings =
+      Enum.reduce(view[:visible_players] || [], state.sightings, fn p, acc ->
+        Map.put(acc, p.id, {view[:tick], p.room})
+      end)
+
+    %{state | sightings: sightings}
+  end
+
+  defp last_seen(view, sightings) do
+    for member <- view[:roster] || [], member.id != view[:id] do
+      case sightings[member.id] do
+        nil -> %{name: member.name, room: nil}
+        {tick, room} -> %{name: member.name, room: room, ticks_ago: view[:tick] - tick}
+      end
+    end
+  end
+
   defp decide(state, view) do
     prompt =
       view
@@ -325,6 +349,7 @@ defmodule Aimongus.Agent.Server do
       # at event time) — passing view.whispers too would render each one
       # twice in the same section
       |> Map.delete(:whispers)
+      |> Map.put(:last_seen, last_seen(view, state.sightings))
       |> Map.put(:memory, state.memory)
       |> Prompt.build()
 
