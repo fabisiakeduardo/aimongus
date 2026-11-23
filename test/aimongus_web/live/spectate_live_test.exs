@@ -69,8 +69,8 @@ defmodule AimongusWeb.SpectateLiveTest do
       assert html =~ ~s(id="ship-map")
       assert html =~ "Cafeteria"
       assert html =~ "MedBay"
-      assert html =~ ~s(id="pawn-red")
-      assert html =~ ~s(id="pawn-blue")
+      assert html =~ "&quot;red&quot;:"
+      assert html =~ "&quot;blue&quot;:"
     end
 
     test "shows a waiting state when no match is running", %{conn: conn} do
@@ -86,11 +86,11 @@ defmodule AimongusWeb.SpectateLiveTest do
 
       {:ok, view, _html} = live(conn, "/watch?match=#{id}")
 
-      assert view |> element("#pawn-red") |> render() =~ "translate(52 52)"
+      assert view |> element("#ship-state") |> render() =~ ~s(&quot;p&quot;:[2,2])
 
       broadcast(id, {:moved, "red", {5, 4}})
 
-      assert view |> element("#pawn-red") |> render() =~ "translate(130 104)"
+      assert view |> element("#ship-state") |> render() =~ ~s(&quot;p&quot;:[5,4])
     end
 
     test "feed shows meeting speech, whispers and system events", %{conn: conn} do
@@ -119,8 +119,9 @@ defmodule AimongusWeb.SpectateLiveTest do
       broadcast(id, {:killed, "blue", "red", {3, 2}})
 
       html = render(view)
-      assert html =~ ~s(class="body")
-      assert view |> element("#pawn-blue") |> render() =~ "ghost"
+      assert html =~ ~s(&quot;bodies&quot;:[{&quot;c&quot;)
+      assert html =~ ~s(&quot;p&quot;:[3,2])
+      assert view |> element("#ship-state") |> render() =~ ~s(&quot;blue&quot;:{&quot;a&quot;:false)
     end
   end
 
@@ -143,9 +144,11 @@ defmodule AimongusWeb.SpectateLiveTest do
 
       html = render(view)
       refute html =~ "Waiting for match"
-      assert html =~ ~s(id="pawn-red")
-      assert html =~ ~s(id="pawn-blue")
-      assert view |> element("#pawn-blue") |> render() =~ "translate(156 52)"
+      assert html =~ ~s(&quot;red&quot;:{)
+      assert html =~ ~s(&quot;blue&quot;:{)
+      html = render(view)
+      assert html =~ ~s(&quot;blue&quot;:{&quot;a&quot;:true)
+      assert html =~ ~s(&quot;p&quot;:[6,2])
     end
 
     test "a moved event for a player whose join was missed still upserts a pawn", %{
@@ -157,7 +160,7 @@ defmodule AimongusWeb.SpectateLiveTest do
 
       broadcast(id, {:moved, "green", {3, 3}})
 
-      assert view |> element("#pawn-green") |> render() =~ "translate(78 78)"
+      assert view |> element("#ship-state") |> render() =~ ~s(&quot;green&quot;:{)
     end
   end
 
@@ -172,7 +175,7 @@ defmodule AimongusWeb.SpectateLiveTest do
       {:ok, view, html} = live(conn, "/watch?match=#{id}")
       refute html =~ ~s(id="mind-panel")
 
-      html = view |> element("#pawn-red") |> render_click()
+      html = view |> element("#ship-map") |> render_hook("select_agent", %{"id" => "red"})
 
       assert html =~ ~s(id="mind-panel")
       assert html =~ "Red"
@@ -191,7 +194,7 @@ defmodule AimongusWeb.SpectateLiveTest do
       {:ok, view, _html} = live(conn, "/watch?match=#{id}")
 
       broadcast(id, {:reasoning, "red", "Blue is shadowing me"})
-      html = view |> element("#pawn-red") |> render_click()
+      html = view |> element("#ship-map") |> render_hook("select_agent", %{"id" => "red"})
 
       assert html =~ "Blue is shadowing me"
       refute html =~ "thinking"
@@ -202,11 +205,13 @@ defmodule AimongusWeb.SpectateLiveTest do
 
       {:ok, view, _html} = live(conn, "/watch?match=#{id}")
 
-      assert view |> element("#pawn-red") |> render_click() =~ ~s(id="mind-panel")
-      refute view |> element("#pawn-red") |> render_click() =~ ~s(id="mind-panel")
+      map = element(view, "#ship-map")
+
+      assert render_hook(map, "select_agent", %{"id" => "red"}) =~ ~s(id="mind-panel")
+      refute render_hook(map, "select_agent", %{"id" => "red"}) =~ ~s(id="mind-panel")
 
       # clicking a different pawn switches the selection
-      html = view |> element("#pawn-blue") |> render_click()
+      html = render_hook(map, "select_agent", %{"id" => "blue"})
       assert html =~ ~s(id="mind-panel")
 
       refute view |> element("#mind-panel-close") |> render_click() =~ ~s(id="mind-panel")
@@ -218,7 +223,7 @@ defmodule AimongusWeb.SpectateLiveTest do
       {:ok, view, _html} = live(conn, "/watch?match=#{id}")
 
       broadcast(id, {:killed, "blue", "red", {5, 2}})
-      html = view |> element("#pawn-blue") |> render_click()
+      html = view |> element("#ship-map") |> render_hook("select_agent", %{"id" => "blue"})
 
       assert html =~ ~s(id="mind-panel")
       assert html =~ "Dead"
@@ -354,13 +359,13 @@ defmodule AimongusWeb.SpectateLiveTest do
       {:ok, view, _html} = live(conn, "/watch?match=#{id}")
 
       broadcast(id, {:ejected, "blue", :impostor})
-      assert view |> element("#pawn-blue") |> render() =~ "ejected"
+      assert view |> element("#ship-state") |> render() =~ ~s(&quot;blue&quot;:{&quot;a&quot;:false,&quot;c&quot;:&quot;#eab308&quot;,&quot;e&quot;:true)
 
       broadcast(id, {:game_over, :crew})
       assert has_element?(view, "#gameover-banner")
 
       broadcast(id, :match_started)
-      refute view |> element("#pawn-blue") |> render() =~ "ejected"
+      refute view |> element("#ship-state") |> render() =~ ~s(&quot;e&quot;:true)
       refute has_element?(view, "#gameover-banner")
     end
 

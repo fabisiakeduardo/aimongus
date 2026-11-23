@@ -276,7 +276,7 @@ defmodule Aimongus.E2ETest do
       assert live_html =~ "Game over"
       assert live_html =~ "the Crew wins"
       assert has_element?(live_view, "#gameover-banner")
-      assert has_element?(live_view, "#pawn-Red")
+      assert live_view |> element("#ship-state") |> render() =~ "&quot;Red&quot;:"
 
       # 3. Verify the recorded replay file matches the live event stream:
       #    - all GameServer events appear in identical strict FIFO order
@@ -310,8 +310,8 @@ defmodule Aimongus.E2ETest do
       replay_html = render(replay_view)
       assert replay_html =~ "the Crew wins"
       assert has_element?(replay_view, "#gameover-banner")
-      assert has_element?(replay_view, "#pawn-Red")
-      assert has_element?(replay_view, "#pawn-Blue")
+      assert replay_view |> element("#ship-state") |> render() =~ "&quot;Red&quot;:"
+      assert replay_view |> element("#ship-state") |> render() =~ "&quot;Blue&quot;:"
     end
   end
 end

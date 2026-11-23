@@ -1206,9 +1206,7 @@ defmodule Aimongus.Game.Server do
           end
       end
 
-    gap_ticks = div(server.state.config.floor_gap_ms, server.state.config.tick_ms)
-
-    if next == :voting or gap_ticks <= 0 do
+    if next == :voting or server.state.config.floor_gap_ms <= 0 do
       promote_speaker(%{server | meeting: %{meeting | current: next, queue: rest, round: round}})
     else
       # A beat between speakers so spectators can read each line before
@@ -1221,7 +1219,7 @@ defmodule Aimongus.Game.Server do
               pending: next,
               queue: rest,
               round: round,
-              floor_ready_at: server.state.tick + gap_ticks
+              floor_ready_at: System.monotonic_time(:millisecond) + server.state.config.floor_gap_ms
           }
       }
     end
@@ -1250,7 +1248,8 @@ defmodule Aimongus.Game.Server do
       deadline_passed?(meeting.deadline) ->
         start_voting(server)
 
-      Map.get(meeting, :pending) && server.state.tick >= meeting.floor_ready_at ->
+      # state.tick freezes during :meeting — the gap is wall-clock, not ticks.
+      Map.get(meeting, :pending) && System.monotonic_time(:millisecond) >= meeting.floor_ready_at ->
         promote_speaker(%{server | meeting: %{meeting | current: meeting.pending}})
 
       true ->

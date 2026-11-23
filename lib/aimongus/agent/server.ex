@@ -487,7 +487,10 @@ defmodule Aimongus.Agent.Server do
   defp schedule_poll(%{poll_ms: :manual} = state), do: state
 
   defp schedule_poll(%{poll_ms: poll_ms} = state) when is_integer(poll_ms) do
-    Process.send_after(self(), :poll, poll_ms)
+    # Fixed per-agent offset so minds don't all fire on the same beat —
+    # without it every pawn re-plans on the same tick and walks in lockstep.
+    jitter = :erlang.phash2(state.player_id, poll_ms)
+    Process.send_after(self(), :poll, poll_ms + jitter)
     state
   end
 

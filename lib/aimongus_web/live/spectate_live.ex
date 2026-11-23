@@ -67,6 +67,7 @@ defmodule AimongusWeb.SpectateLive do
         match_id: match_id,
         map: map,
         cell: @cell,
+        map_json: map_json(map),
         room_labels: room_labels(map),
         room_hues: room_hues(map),
         decor: map_decor(map),
@@ -577,6 +578,7 @@ defmodule AimongusWeb.SpectateLive do
           running?: true,
           phase: state.phase,
           map: state.map,
+          map_json: map_json(state.map),
           room_labels: room_labels(state.map),
           room_hues: room_hues(state.map),
           decor: map_decor(state.map),
@@ -999,6 +1001,69 @@ defmodule AimongusWeb.SpectateLive do
 
   @doc false
   def lights_out?(sabotage), do: match?(%{kind: :lights}, sabotage)
+
+  @doc false
+  # Static ship payload for the Ship3D hook: sent once via `data-map`
+  # (the hook element is phx-update=ignore, so the attribute survives).
+  # `rows` encodes each tile as -1 wall, -2 corridor, or the room index
+  # into `rooms`.
+  def map_json(map) do
+    rooms = map.rooms |> Map.keys() |> Enum.sort()
+    hues = room_hues(map)
+    room_idx = Map.new(Enum.with_index(rooms), fn {name, i} -> {name, i} end)
+
+    rows =
+      for y <- 0..(map.height - 1) do
+        for x <- 0..(map.width - 1) do
+          case map.room_cells[{x, y}] do
+            nil -> if(map.tiles[{x, y}] == "#", do: -1, else: -2)
+            name -> room_idx[name]
+          end
+        end
+      end
+
+    Jason.encode!(%{
+      "w" => map.width,
+      "h" => map.height,
+      "cell" => @cell,
+      "rows" => rows,
+      "rooms" => Enum.map(rooms, &%{"n" => &1, "h" => hues[&1]}),
+      "tasks" => Map.new(map.tasks, fn {id, {x, y}} -> {id, [x, y]} end),
+      "button" => Tuple.to_list(map.button),
+      "props" =>
+        Enum.map(map_decor(map).props, &%{"k" => to_string(&1.kind), "x" => &1.x, "y" => &1.y})
+    })
+  end
+
+  @doc false
+  # Per-patch authoritative game state for the Ship3D hook — tiny JSON
+  # on a hidden sibling div, so the 3D scene always renders exactly
+  # what the server knows (no stale DOM, no drift).
+  def ship_state_json(players, bodies, moving, ejected_ids, selected_agent, sabotage) do
+    pawns =
+      for {id, p} <- players, into: %{} do
+        {ox, oy} = crowd_offset(players, id)
+
+        {id,
+         %{
+           "n" => p.name,
+           "p" => [elem(p.pos, 0), elem(p.pos, 1)],
+           "o" => [ox, oy],
+           "c" => pawn_color(p),
+           "a" => p.alive?,
+           "m" => MapSet.member?(moving, id),
+           "r" => to_string(p.role),
+           "e" => MapSet.member?(ejected_ids, id),
+           "sel" => selected_agent == id
+         }}
+      end
+
+    dead =
+      for b <- bodies,
+          do: %{"p" => [elem(b.pos, 0), elem(b.pos, 1)], "c" => player_color(players, b.player_id)}
+
+    Jason.encode!(%{"players" => pawns, "bodies" => dead, "lights" => lights_out?(sabotage)})
+  end
 
   @doc false
   # Tile → pixel position for a pawn, including the anti-overlap ring

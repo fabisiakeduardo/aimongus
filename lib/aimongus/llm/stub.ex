@@ -60,11 +60,7 @@ defmodule Aimongus.LLM.Stub do
   def demo_responder(prompt) when is_binary(prompt) do
     cond do
       String.contains?(prompt, "phase voting") ->
-        choice =
-          case Regex.scan(~r/\(id "([^"]+)"\)/, prompt) do
-            [] -> "skip"
-            matches -> matches |> Enum.random() |> List.last()
-          end
+        choice = vote_choice(prompt)
 
         Jason.encode!(%{
           reasoning: "weighing the meeting claims before casting my ballot",
@@ -72,26 +68,16 @@ defmodule Aimongus.LLM.Stub do
         })
 
       String.contains?(prompt, "phase meeting") ->
-        line =
-          case Regex.run(~r/I SAW (\S+) kill (\S+)/, prompt) do
-            [_, killer, victim] ->
-              "I SAW #{killer} kill #{victim} with my own eyes — vote #{killer}!"
-
-            nil ->
-              Enum.random([
-                "I was working on tasks in MedBay when the alarm went off.",
-                "Someone was loitering near Electrical — check alibis!",
-                "I saw movement heading out of Cafeteria right before the report.",
-                "Too quiet in here. Anyone willing to vouch for their room?"
-              ])
-          end
+        line = meeting_line(prompt)
 
         Jason.encode!(%{
           reasoning: "sharing what I know with the table",
           intent: %{type: "speak", text: line}
         })
 
-      String.contains?(prompt, "Bodies in sight:") ->
+      # Killers walk away from bodies — a self-report three seconds
+      # after the murder reads as scripted. Crew reports what it finds.
+      String.contains?(prompt, "Bodies in sight:") and not killer?(prompt) ->
         Jason.encode!(%{
           reasoning: "spotted a body — calling a meeting immediately",
           intent: %{type: "report"}
@@ -115,7 +101,7 @@ defmodule Aimongus.LLM.Stub do
             })
 
           nil ->
-            room = Enum.random(@demo_rooms)
+            room = patrol_room(prompt)
 
             Jason.encode!(%{
               reasoning: "patrolling toward #{room}",
@@ -125,11 +111,113 @@ defmodule Aimongus.LLM.Stub do
     end
   end
 
+  # Meeting talk that reacts to the transcript: a witness speaks up,
+  # an accused pawn defends itself, others second a real accusation or
+  # press the table for the report details — nobody talks in a vacuum.
+  defp meeting_line(prompt) do
+    me = self_name(prompt)
+
+    cond do
+      match = Regex.run(~r/I SAW ([A-Z][a-z]+) kill ([A-Z][a-z]+)/, prompt) ->
+        [_, killer, victim] = match
+        "I SAW #{killer} kill #{victim} with my own eyes — vote #{killer}!"
+
+      accused?(prompt, me) ->
+        Enum.random([
+          "That wasn't me — check the alibis before you throw a crewmate out the airlock.",
+          "Wrong bean. I was doing tasks — who actually SAW anything?",
+          "You want to eject me on a hunch? Ask the witness what they really saw."
+        ])
+
+      match = Regex.run(~r/vote ([A-Z][a-z]+)/, prompt) ->
+        [_, accused] = match
+        Enum.random([
+          "If #{accused} was seen at the body, that's enough for me — #{accused} goes.",
+          "Second that. #{accused} has been too quiet all match.",
+          "#{accused}? I can believe it — they were nowhere near their tasks."
+        ])
+
+      true ->
+        Enum.random([
+          "Who reported the body? Where was it found — and who was nearby?",
+          "I want alibis: everyone name your room when the alarm went off.",
+          "Someone is lying in this room. Say where you were.",
+          "Too quiet in here. Anyone willing to vouch for their room?"
+        ])
+    end
+  end
+
+  # Vote like a player: follow a witnessed kill or a seconded
+  # accusation, never vote for yourself, skip when nothing sticks.
+  defp vote_choice(prompt) do
+    me_id =
+      case Regex.run(~r/player id "([^"]+)"/, prompt) do
+        [_, id] -> id
+        _ -> nil
+      end
+
+    accused =
+      cond do
+        match = Regex.run(~r/I SAW ([A-Z][a-z]+) kill/, prompt) -> List.last(match)
+        match = Regex.run(~r/vote ([A-Z][a-z]+)/, prompt) -> List.last(match)
+        true -> nil
+      end
+
+    candidates =
+      ~r/\(id "([^"]+)"\)/
+      |> Regex.scan(prompt)
+      |> Enum.map(&List.last/1)
+      |> Enum.uniq()
+      |> Enum.reject(&(&1 == me_id))
+
+    cond do
+      accused && accused != me_id && accused in candidates -> accused
+      accused && accused != me_id -> accused
+      candidates == [] -> "skip"
+      Enum.random(1..3) == 1 -> "skip"
+      true -> Enum.random(candidates)
+    end
+  end
+
+  defp self_name(prompt) do
+    case Regex.run(~r/as "([^"]+)" \(player id/, prompt) do
+      [_, name] -> name
+      _ -> nil
+    end
+  end
+
+  defp accused?(_prompt, nil), do: false
+
+  defp accused?(prompt, me) do
+    Regex.match?(~r/vote #{Regex.escape(me)}\b/i, prompt) or
+      Regex.match?(~r/I SAW #{Regex.escape(me)} kill/, prompt)
+  end
+
+  defp killer?(prompt) do
+    Regex.match?(~r/you are an? (impostor|serial killer)\./, prompt)
+  end
+
+  # Each demo agent patrols its own shuffle of the ship — keyed by the
+  # "player id" line in the prompt — so pawns fan out to different
+  # sectors instead of conga-lining down the same corridor.
+  defp patrol_room(prompt) do
+    id =
+      case Regex.run(~r/player id "([^"]+)"/, prompt) do
+        [_, id] -> id
+        _ -> ""
+      end
+
+    @demo_rooms
+    |> Enum.sort_by(&:erlang.phash2({id, &1}))
+    |> Enum.take(4)
+    |> Enum.random()
+  end
+
   # A kill is only worth it on an isolated target: with a second pawn in
   # sight, the murder gets a living witness who will report and accuse.
   defp lone_target?(prompt) do
-    prompt
-    |> Regex.scan(~r/- [^\n]+ \(id "[^"]+"\)/)
+    ~r/- [^\n]+ \(id "[^"]+"\)/
+    |> Regex.scan(prompt)
     |> length() == 1
   end
 
