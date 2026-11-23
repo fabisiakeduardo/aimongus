@@ -173,17 +173,41 @@ defmodule Aimongus.LLM.Stub do
           "Can't help you there, #{who} — my vision's been empty all match."
         ])
 
-      last = last_speech(prompt) ->
-        {who, text} = last
-        "#{who} makes a fair point — but I still want to know who was alone near the body."
-
       true ->
+        suspect = my_suspect(prompt)
+
         Enum.random([
-          "Where was the body found — and who was seen near it?",
-          "I want alibis: everyone name your room when the alarm went off.",
-          "Someone is lying in this room. Say where you were.",
-          "Too quiet in here. Anyone willing to vouch for their room?"
+          "#{suspect}, where exactly were you when the body dropped? Answer that first.",
+          "I've been watching #{suspect} — faking tasks, skipping rooms. I'm voting #{suspect}.",
+          "Still on #{suspect}. Nobody's seen them do a single task all match.",
+          "#{suspect} is way too comfortable in this meeting. Say your alibi, #{suspect}.",
+          "My vote's on #{suspect} — somebody here saw more than they're admitting."
         ])
+    end
+  end
+
+  # Every agent carries its own suspect into the meeting — a stable pick
+  # hashed off its id, so the accusation survives across rounds instead
+  # of everyone humming "too quiet in here". Players have suspects.
+  defp my_suspect(prompt) do
+    me_id =
+      case Regex.run(~r/player id "([^"]+)"/, prompt) do
+        [_, id] -> id
+        _ -> ""
+      end
+
+    me = self_name(prompt)
+
+    candidates =
+      ~r/(?:- |, |— )([A-Z][a-z]+)/
+      |> Regex.scan(prompt)
+      |> Enum.map(&List.last/1)
+      |> Enum.uniq()
+      |> Enum.reject(&(&1 == me or &1 in ~w(Said You Said The And But Your Yourself Secret Neutral Crew Impostor Sheriff Medic Vigilante Jester Serial Killer)))
+
+    case candidates do
+      [] -> "someone"
+      names -> Enum.min_by(names, &:erlang.phash2({me_id, &1}))
     end
   end
 
