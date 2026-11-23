@@ -120,7 +120,10 @@ defmodule Aimongus.LLM.Stub do
     me = self_name(prompt)
 
     cond do
-      Regex.match?(~r/#{safe(me)} \(id "[^"]+"\) called this meeting — they reported a body/, prompt) ->
+      Regex.match?(
+        ~r/#{safe(me)} \(id "[^"]+"\) called this meeting — they reported a body/,
+        prompt
+      ) ->
         "I found the body — that's why I called this meeting. Who was near the scene?"
 
       Regex.match?(~r/#{safe(me)} \(id "[^"]+"\) called this meeting — they pressed/, prompt) ->
@@ -139,6 +142,7 @@ defmodule Aimongus.LLM.Stub do
 
       match = Regex.run(~r/vote ([A-Z][a-z]+)/, prompt) ->
         [_, accused] = match
+
         Enum.random([
           "If #{accused} was seen at the body, that's enough for me — #{accused} goes.",
           "Second that. #{accused} has been too quiet all match.",

@@ -121,7 +121,9 @@ defmodule AimongusWeb.SpectateLiveTest do
       html = render(view)
       assert html =~ ~s(&quot;bodies&quot;:[{&quot;c&quot;)
       assert html =~ ~s(&quot;p&quot;:[3,2])
-      assert view |> element("#ship-state") |> render() =~ ~s(&quot;blue&quot;:{&quot;a&quot;:false)
+
+      assert view |> element("#ship-state") |> render() =~
+               ~s(&quot;blue&quot;:{&quot;a&quot;:false)
     end
   end
 
@@ -359,7 +361,9 @@ defmodule AimongusWeb.SpectateLiveTest do
       {:ok, view, _html} = live(conn, "/watch?match=#{id}")
 
       broadcast(id, {:ejected, "blue", :impostor})
-      assert view |> element("#ship-state") |> render() =~ ~s(&quot;blue&quot;:{&quot;a&quot;:false,&quot;c&quot;:&quot;#eab308&quot;,&quot;e&quot;:true)
+
+      assert view |> element("#ship-state") |> render() =~
+               ~s(&quot;blue&quot;:{&quot;a&quot;:false,&quot;c&quot;:&quot;#eab308&quot;,&quot;e&quot;:true)
 
       broadcast(id, {:game_over, :crew})
       assert has_element?(view, "#gameover-banner")

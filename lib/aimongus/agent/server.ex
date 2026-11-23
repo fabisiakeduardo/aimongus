@@ -257,9 +257,7 @@ defmodule Aimongus.Agent.Server do
   def handle_cast({:witnessed_kill, killer, victim, pos}, state) do
     {:noreply,
      state
-     |> remember_hard(
-       "I SAW #{killer} kill #{victim} at #{inspect(pos)} — #{killer} is a killer"
-     )
+     |> remember_hard("I SAW #{killer} kill #{victim} at #{inspect(pos)} — #{killer} is a killer")
      |> wake()}
   end
 

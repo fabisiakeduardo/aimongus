@@ -1196,7 +1196,9 @@ defmodule Aimongus.Game.Server do
 
     {next, rest, round} =
       case meeting.queue do
-        [n | r] -> {n, r, meeting.round}
+        [n | r] ->
+          {n, r, meeting.round}
+
         [] ->
           if meeting.round < server.state.config.speech_rounds do
             [n | r] = alive_ids(server.state)
@@ -1219,7 +1221,8 @@ defmodule Aimongus.Game.Server do
               pending: next,
               queue: rest,
               round: round,
-              floor_ready_at: System.monotonic_time(:millisecond) + server.state.config.floor_gap_ms
+              floor_ready_at:
+                System.monotonic_time(:millisecond) + server.state.config.floor_gap_ms
           }
       }
     end
@@ -1673,6 +1676,8 @@ defmodule Aimongus.Game.Server do
     }
   end
 
+  defp meeting_view(_server, _player_id), do: nil
+
   # Who called the meeting and how — public knowledge, just like at the
   # real table: everyone sees who slammed the button or found the body.
   defp meeting_reason_view(%{reason: {kind, id}}, state)
@@ -1681,8 +1686,6 @@ defmodule Aimongus.Game.Server do
   end
 
   defp meeting_reason_view(_meeting, _state), do: nil
-
-  defp meeting_view(_server, _player_id), do: nil
 
   defp manhattan({x1, y1}, {x2, y2}), do: abs(x1 - x2) + abs(y1 - y2)
 end

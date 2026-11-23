@@ -1060,7 +1060,10 @@ defmodule AimongusWeb.SpectateLive do
 
     dead =
       for b <- bodies,
-          do: %{"p" => [elem(b.pos, 0), elem(b.pos, 1)], "c" => player_color(players, b.player_id)}
+          do: %{
+            "p" => [elem(b.pos, 0), elem(b.pos, 1)],
+            "c" => player_color(players, b.player_id)
+          }
 
     Jason.encode!(%{"players" => pawns, "bodies" => dead, "lights" => lights_out?(sabotage)})
   end

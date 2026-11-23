@@ -285,7 +285,16 @@
           <div
             id="ship-state"
             class="hidden"
-            data-state={ship_state_json(@players, @bodies, @moving, @ejected_ids, @selected_agent, @sabotage)}
+            data-state={
+              ship_state_json(
+                @players,
+                @bodies,
+                @moving,
+                @ejected_ids,
+                @selected_agent,
+                @sabotage
+              )
+            }
           >
           </div>
           <div
