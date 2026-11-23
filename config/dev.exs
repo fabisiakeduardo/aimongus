@@ -48,7 +48,7 @@ config :aimongus, dev_routes: true
 # Give local CLI-backed agents (CodexCLI / DevinCLI) enough headroom
 # when multiple pawns think concurrently in dev.
 config :aimongus, Aimongus.Match.Manager,
-  game_config: %{floor_gap_ms: 1_800},
+  game_config: %{floor_gap_ms: 1_800, arm_start_cooldowns?: true},
   agent_opts: [poll_ms: 8_000, llm_timeout: 45_000]
 
 # Do not include metadata nor timestamps in development logs

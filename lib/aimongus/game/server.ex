@@ -469,6 +469,25 @@ defmodule Aimongus.Game.Server do
 
     state = server.state |> State.assign_roles(role_map) |> State.assign_tasks()
 
+    # Everyone spawns crowded at the button — an instant legal kill in
+    # the opening seconds reads as broken, not clever. Real games arm
+    # the kill cooldown at match start; so do abilities (sabotage,
+    # investigate, protect, vigilante). Opt-in via :arm_start_cooldowns?
+    # so engine tests can keep kill-on-tick-one scenarios.
+    state =
+      if state.config[:arm_start_cooldowns?] do
+        players =
+          Map.new(state.players, fn {id, p} ->
+            cd = state.config.kill_cooldown_ticks
+
+            {id, %{p | kill_ready_at: state.tick + cd, ability_ready_at: state.tick + cd}}
+          end)
+
+        %{state | players: players}
+      else
+        state
+      end
+
     server = %{
       server
       | state: %{state | phase: :free_roam},
