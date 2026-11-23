@@ -18,10 +18,15 @@ defmodule AimongusWeb.Router do
     pipe_through :browser
 
     get "/", PageController, :home
+
+    live "/watch", SpectateLive
   end
 
-  # Other scopes may use custom stacks.
-  # scope "/api", AimongusWeb do
-  #   pipe_through :api
-  # end
+  # Operator controls — the admin gate lives in the controller
+  # (AIMONGUS_ADMIN_TOKEN), not in a pipeline plug.
+  scope "/admin", AimongusWeb do
+    pipe_through :api
+
+    post "/new-match", AdminController, :new_match
+  end
 end

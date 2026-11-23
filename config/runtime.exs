@@ -23,6 +23,33 @@ end
 config :aimongus, AimongusWeb.Endpoint,
   http: [port: String.to_integer(System.get_env("PORT", "4000"))]
 
+case System.get_env("AIMONGUS_LLM") do
+  "stub" ->
+    config :aimongus, :llm_adapters, %{default: Aimongus.LLM.Stub}
+
+    config :aimongus, Aimongus.Match.Manager,
+      speed: 2.0,
+      # At 20 ticks/sec the default task_ticks (50) finishes a task in
+      # 2.5s — the crew would sweep the ship before an impostor can even
+      # cross it. Demo tasks take ~20s of channeling like the real game.
+      game_config: %{
+        floor_gap_ms: 1_800,
+        task_ticks: 400,
+        tasks_per_player: 4,
+        arm_start_cooldowns?: true
+      },
+      agent_opts: [poll_ms: 2_500, llm_opts: [respond: &Aimongus.LLM.Stub.demo_responder/1]]
+
+  "devin" ->
+    config :aimongus, :llm_adapters, %{default: Aimongus.LLM.DevinCLI}
+
+  "codex" ->
+    config :aimongus, :llm_adapters, %{default: Aimongus.LLM.CodexCLI}
+
+  _other ->
+    :ok
+end
+
 if config_env() == :dev do
   # Reload browser tabs when matching files change.
   config :aimongus, AimongusWeb.Endpoint,
@@ -39,6 +66,9 @@ if config_env() == :dev do
 end
 
 if config_env() == :prod do
+  # Production drives agents through OpenRouter (OPENROUTER_API_KEY).
+  config :aimongus, :llm_adapters, %{default: Aimongus.LLM.OpenRouter}
+
   # The secret key base is used to sign/encrypt cookies and other secrets.
   # A default value is used in config/dev.exs and config/test.exs but you
   # want to use a different value for prod and you most likely don't want

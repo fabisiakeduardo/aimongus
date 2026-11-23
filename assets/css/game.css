@@ -1,0 +1,470 @@
+/* ---------------------------------------------------------------------------
+ * AImongUS spectator art direction — "stylized space station seen from above".
+ *
+ * Everything game-specific lives here so app.css stays a generic Tailwind
+ * entry. Animations are pure CSS keyframes (plus a little SMIL in the SVG
+ * for one-shot pings) so LiveView DOM diffs keep working: a class on an
+ * element restarts its animation only when the element is actually
+ * re-inserted.
+ * ------------------------------------------------------------------------- */
+
+/* ---------- space backdrop ---------- */
+
+/* Layered radial-gradient starfield + two faint nebulas over a near-black
+   base. Pure CSS, no image assets — the "stars" are 1px gradient stops at
+   hand-scattered positions. */
+.space-bg {
+  background-color: #04060c;
+  background-image:
+    radial-gradient(1px 1px at 8% 12%, rgba(255, 255, 255, 0.9), transparent),
+    radial-gradient(1px 1px at 22% 78%, rgba(255, 255, 255, 0.55), transparent),
+    radial-gradient(1.4px 1.4px at 34% 30%, rgba(186, 230, 253, 0.9), transparent),
+    radial-gradient(1px 1px at 47% 62%, rgba(255, 255, 255, 0.45), transparent),
+    radial-gradient(1.2px 1.2px at 58% 15%, rgba(255, 255, 255, 0.8), transparent),
+    radial-gradient(1px 1px at 66% 85%, rgba(255, 255, 255, 0.5), transparent),
+    radial-gradient(1.4px 1.4px at 74% 44%, rgba(196, 181, 253, 0.8), transparent),
+    radial-gradient(1px 1px at 81% 8%, rgba(255, 255, 255, 0.6), transparent),
+    radial-gradient(1px 1px at 90% 66%, rgba(255, 255, 255, 0.75), transparent),
+    radial-gradient(1.2px 1.2px at 95% 34%, rgba(255, 255, 255, 0.5), transparent),
+    radial-gradient(1px 1px at 15% 48%, rgba(255, 255, 255, 0.4), transparent),
+    radial-gradient(1px 1px at 41% 90%, rgba(255, 255, 255, 0.6), transparent),
+    radial-gradient(1.3px 1.3px at 52% 42%, rgba(255, 255, 255, 0.35), transparent),
+    radial-gradient(1px 1px at 70% 25%, rgba(255, 255, 255, 0.45), transparent),
+    radial-gradient(1px 1px at 28% 8%, rgba(255, 255, 255, 0.5), transparent),
+    radial-gradient(1.5px 1.5px at 86% 92%, rgba(254, 202, 202, 0.7), transparent),
+    radial-gradient(1px 1px at 4% 70%, rgba(255, 255, 255, 0.55), transparent),
+    radial-gradient(1px 1px at 62% 55%, rgba(255, 255, 255, 0.35), transparent),
+    radial-gradient(600px 420px at 18% 88%, rgba(76, 29, 149, 0.16), transparent 70%),
+    radial-gradient(700px 480px at 85% 12%, rgba(12, 74, 110, 0.22), transparent 70%);
+}
+
+/* Soft dark vignette drawn over the map stage so the playfield feels lit
+   from the middle and falls off into space at the edges. */
+.vignette {
+  pointer-events: none;
+  background: radial-gradient(
+    ellipse 80% 72% at 50% 46%,
+    transparent 58%,
+    rgba(2, 4, 10, 0.45) 88%,
+    rgba(1, 2, 6, 0.72) 100%
+  );
+}
+
+/* The ship floats over space: a cold glow plus a hard drop shadow. */
+#ship-map {
+  filter: drop-shadow(0 0 26px rgba(56, 130, 246, 0.22))
+    drop-shadow(0 14px 28px rgba(0, 0, 0, 0.6));
+}
+
+/* ---------- pawns ---------- */
+
+/* Idle bob. Applied to an inner <g> so the outer <g>'s positional
+   transform (inline style, updated by LiveView) never fights the
+   animation. transform-box makes the bob local to the pawn art. */
+@keyframes pawn-bob {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-1.6px);
+  }
+}
+
+.pawn.alive .pawn-bob {
+  transform-box: fill-box;
+  animation: pawn-bob 2.6s ease-in-out infinite;
+}
+
+/* Waddle: while a pawn travels it rocks side-to-side on its feet,
+   faster and more urgent than the idle bob. */
+@keyframes pawn-waddle {
+  0%,
+  100% {
+    transform: rotate(-5deg) translateY(0);
+  }
+  25% {
+    transform: rotate(0deg) translateY(-2.2px);
+  }
+  50% {
+    transform: rotate(5deg) translateY(0);
+  }
+  75% {
+    transform: rotate(0deg) translateY(-2.2px);
+  }
+}
+
+.pawn.alive.moving .pawn-bob {
+  transform-box: fill-box;
+  transform-origin: 50% 90%;
+  animation: pawn-waddle 0.5s ease-in-out infinite;
+}
+
+/* Dead pawns drift like ghosts — slower, floating, semi-transparent. */
+@keyframes ghost-float {
+  0%,
+  100% {
+    transform: translateY(0.4px);
+    opacity: 0.75;
+  }
+  50% {
+    transform: translateY(-2.6px);
+    opacity: 1;
+  }
+}
+
+.pawn.ghost .pawn-bob {
+  transform-box: fill-box;
+  animation: ghost-float 3.4s ease-in-out infinite;
+}
+
+/* Ejection: the poor sod tumbles off into space and fades out. The
+   animation holds its final frame so the pawn simply never comes back. */
+@keyframes eject-drift {
+  0% {
+    transform: translate(0, 0) rotate(0deg);
+    opacity: 1;
+  }
+  100% {
+    transform: translate(30px, -46px) rotate(55deg);
+    opacity: 0;
+  }
+}
+
+.pawn.ejected .pawn-bob {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: eject-drift 1.8s cubic-bezier(0.3, 0.6, 0.6, 1) forwards;
+}
+
+/* Selection / speaking rings — soft breathing glow, CSS only. */
+@keyframes ring-breathe {
+  0%,
+  100% {
+    opacity: 0.55;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+.pawn .selected-ring {
+  stroke-dasharray: 4 3;
+  animation: ring-breathe 1.6s ease-in-out infinite;
+}
+
+.pawn .speaking-ring {
+  animation: ring-breathe 0.9s ease-in-out infinite;
+}
+
+/* ---------- task spots ---------- */
+
+@keyframes task-pulse {
+  0%,
+  100% {
+    opacity: 0.55;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+.task-spot .task-glow {
+  animation: task-pulse 2.2s ease-in-out infinite;
+}
+
+.task-spot.done .task-glow {
+  animation: none;
+}
+
+/* ---------- event feed ---------- */
+
+@keyframes feed-in {
+  from {
+    opacity: 0;
+    transform: translateY(5px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.feed-item {
+  animation: feed-in 0.28s ease-out;
+}
+
+/* Slim dark scrollbar for the log — it should feel like a console. */
+#event-feed {
+  scrollbar-width: thin;
+  scrollbar-color: #1e293b transparent;
+}
+
+#event-feed::-webkit-scrollbar {
+  width: 7px;
+}
+
+#event-feed::-webkit-scrollbar-thumb {
+  background: #1e293b;
+  border-radius: 4px;
+}
+
+#event-feed::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* ---------- waiting-for-match radar ---------- */
+
+@keyframes radar-ping {
+  0% {
+    transform: scale(0.25);
+    opacity: 0.9;
+  }
+  100% {
+    transform: scale(1);
+    opacity: 0;
+  }
+}
+
+.radar {
+  position: relative;
+  width: 7rem;
+  height: 7rem;
+}
+
+.radar > span {
+  position: absolute;
+  inset: 0;
+  border-radius: 9999px;
+  border: 1.5px solid rgba(56, 189, 248, 0.65);
+  animation: radar-ping 2.6s cubic-bezier(0.1, 0.6, 0.4, 1) infinite;
+}
+
+.radar > span:nth-child(2) {
+  animation-delay: 0.85s;
+}
+
+.radar > span:nth-child(3) {
+  animation-delay: 1.7s;
+}
+
+.radar > .radar-dot {
+  inset: auto;
+  left: 50%;
+  top: 50%;
+  width: 8px;
+  height: 8px;
+  margin: -4px 0 0 -4px;
+  border: 0;
+  background: #38bdf8;
+  box-shadow: 0 0 12px 3px rgba(56, 189, 248, 0.8);
+  animation: none;
+}
+
+/* ---------- meeting phase ---------- */
+
+@keyframes overlay-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.meeting-overlay {
+  animation: overlay-in 0.35s ease-out;
+}
+
+/* Hazard-stripe banner — classic "something is wrong" tape, animated. */
+@keyframes hazard-scroll {
+  to {
+    background-position: 56px 0;
+  }
+}
+
+.meeting-banner {
+  background-image: repeating-linear-gradient(
+    -45deg,
+    rgba(250, 204, 21, 0.9) 0 14px,
+    rgba(10, 10, 14, 0.9) 14px 28px
+  );
+  background-size: 56px 56px;
+  animation: hazard-scroll 1.4s linear infinite;
+}
+
+.meeting-banner.voting {
+  background-image: repeating-linear-gradient(
+    -45deg,
+    rgba(248, 113, 113, 0.9) 0 14px,
+    rgba(10, 10, 14, 0.9) 14px 28px
+  );
+}
+
+/* The vote tablet: a chunky slate handheld panel, like the in-game
+   discussion device — light faceplate, dark bezel. */
+.vote-tablet {
+  animation: tablet-drop 0.45s cubic-bezier(0.2, 0.9, 0.3, 1.15);
+}
+
+@keyframes tablet-drop {
+  0% {
+    opacity: 0;
+    transform: translateY(22px) scale(0.96);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes vote-row-speak {
+  0%,
+  100% {
+    box-shadow: inset 0 0 0 2px rgba(217, 119, 6, 0.75);
+  }
+  50% {
+    box-shadow: inset 0 0 0 3px rgba(217, 119, 6, 0.3);
+  }
+}
+
+.vote-row-speaking {
+  animation: vote-row-speak 1s ease-in-out infinite;
+}
+
+/* ---------- sabotage ---------- */
+
+/* Lights-out: heavy vignette over the whole map so only the pool of
+   light right around the pawns reads — the ship goes dark. */
+.lights-out {
+  pointer-events: none;
+  background: radial-gradient(
+    ellipse 55% 50% at 50% 50%,
+    transparent 30%,
+    rgba(2, 4, 10, 0.82) 78%,
+    rgba(1, 2, 6, 0.94) 100%
+  );
+  animation: lights-fade 0.5s ease-out;
+}
+
+@keyframes lights-fade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+/* The alert band: hazard stripes pulsing red, like the in-game alarm. */
+.sabotage-alert {
+  background-image: repeating-linear-gradient(
+    -45deg,
+    rgba(185, 28, 28, 0.55) 0 14px,
+    rgba(20, 8, 8, 0.55) 14px 28px
+  );
+  border-bottom: 1px solid rgba(248, 113, 113, 0.4);
+  animation: alert-pulse 1.1s ease-in-out infinite;
+}
+
+@keyframes alert-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.72;
+  }
+}
+
+/* Reactor countdown: drains left-to-right over the real meltdown
+   window (inline animation-duration set from the event). */
+.meltdown-bar {
+  width: 100%;
+  transform-origin: left;
+  animation-name: meltdown-drain;
+  animation-timing-function: linear;
+  animation-fill-mode: forwards;
+}
+
+@keyframes meltdown-drain {
+  from {
+    transform: scaleX(1);
+  }
+  to {
+    transform: scaleX(0);
+  }
+}
+
+/* ---------- winner banner ---------- */
+
+@keyframes banner-drop {
+  0% {
+    opacity: 0;
+    transform: translateY(-18px) scale(0.96);
+  }
+  60% {
+    opacity: 1;
+    transform: translateY(3px) scale(1.01);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.gameover-banner {
+  animation: banner-drop 0.6s cubic-bezier(0.2, 0.9, 0.3, 1.2);
+}
+
+/* ---------- misc ---------- */
+
+/* Room labels sit behind pawns and never steal clicks. */
+.room-label {
+  pointer-events: none;
+  font-family: var(--font-display);
+  fill: rgba(226, 232, 240, 0.5);
+}
+
+/* Slow ambient glow pulse on the map stage frame. */
+@keyframes stage-glow {
+  0%,
+  100% {
+    box-shadow: 0 0 0 1px rgba(51, 65, 85, 0.7), 0 0 44px rgba(30, 64, 175, 0.12);
+  }
+  50% {
+    box-shadow: 0 0 0 1px rgba(71, 85, 105, 0.9), 0 0 64px rgba(30, 64, 175, 0.22);
+  }
+}
+
+.map-stage {
+  animation: stage-glow 6s ease-in-out infinite;
+}
+
+/* Kill flash overlay — element only exists while a kill fx is live, so
+   the animation plays exactly once per insertion. */
+@keyframes kill-flash {
+  0% {
+    box-shadow: inset 0 0 0 0 rgba(239, 68, 68, 0);
+  }
+  25% {
+    box-shadow: inset 0 0 90px 34px rgba(239, 68, 68, 0.55);
+  }
+  100% {
+    box-shadow: inset 0 0 120px 60px rgba(239, 68, 68, 0);
+  }
+}
+
+.kill-flash {
+  animation: kill-flash 0.8s ease-out forwards;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pawn .pawn-bob,
+  .radar > span,
+  .meeting-banner,
+  .task-spot .task-glow,
+  .map-stage {
+    animation: none;
+  }
+}

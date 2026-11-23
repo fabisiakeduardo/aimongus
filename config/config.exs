@@ -10,6 +10,22 @@ import Config
 config :aimongus,
   generators: [timestamp_type: :utc_datetime]
 
+# Per-agent LLM adapter selection: agent id => module, :default as
+# fallback. CodexCLI shells out to `codex exec` (OpenAI Codex CLI,
+# fast/cheap model by default); test env overrides with the scripted
+# Stub and prod should point at OpenRouter.
+config :aimongus, :llm_adapters, %{default: Aimongus.LLM.CodexCLI}
+
+# Per-call USD cost estimates the MatchManager charges against
+# DAILY_LLM_BUDGET_USD. CodexCLI/DevinCLI are $0 — they burn local CLI
+# quota, not a billed API — and the Stub never leaves the test env.
+config :aimongus, :llm_call_costs, %{
+  Aimongus.LLM.CodexCLI => 0.0,
+  Aimongus.LLM.DevinCLI => 0.0,
+  Aimongus.LLM.Stub => 0.0,
+  Aimongus.LLM.OpenRouter => %{default: 0.002}
+}
+
 # Configure the endpoint
 config :aimongus, AimongusWeb.Endpoint,
   url: [host: "localhost"],
